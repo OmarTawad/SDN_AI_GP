@@ -1,0 +1,4 @@
+ryu
+setuptools==57.5.0
+dnspython==2.1.0
+eventlet==0.30.2
