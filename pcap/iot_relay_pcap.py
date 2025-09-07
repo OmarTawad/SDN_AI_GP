@@ -16,7 +16,7 @@ class IoTTrafficReplayer(app_manager.RyuApp):
         self.logger.setLevel(logging.INFO)
 
         # PCAP file path
-        self.pcap_file = '/home/omar/SDN_IoT_Simulated/18-10-27.pcap'
+        self.pcap_file = '/home/omar/18-10-27.pcap'
 
         # Mapping of MAC addresses to friendly names
         self.device_map = self._load_device_map()

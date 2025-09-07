@@ -1,0 +1,158 @@
+[
+  {
+    "ip": "192.168.1.1",
+    "mac": "14:cc:20:51:33:ea",
+    "name": "TPLink Router (Gateway)",
+    "conn": "Wired"
+  },
+  {
+    "ip": "192.168.1.106",
+    "mac": "30:8c:fb:2f:e4:b2",
+    "name": "Dropcam",
+    "conn": "Wireless"
+  },
+  {
+    "ip": "192.168.1.108",
+    "mac": "f4:f2:6d:93:51:f1",
+    "name": "TP-Link Day Night Cloud camera",
+    "conn": "Wireless"
+  },
+  {
+    "ip": "192.168.1.112",
+    "mac": "70:ee:50:03:b8:ac",
+    "name": "Netatmo Weather Station",
+    "conn": "Wireless"
+  },
+  {
+    "ip": "192.168.1.118",
+    "mac": "d0:73:d5:01:83:08",
+    "name": "LiFX Smart Bulb",
+    "conn": "Wireless"
+  },
+  {
+    "ip": "192.168.1.119",
+    "mac": "f4:f5:d8:8f:0a:3c",
+    "name": "Unknown-f4:f5:d8:8f:0a:3c",
+    "conn": "Unknown"
+  },
+  {
+    "ip": "192.168.1.120",
+    "mac": "18:b7:9e:02:20:44",
+    "name": "Triby Speaker",
+    "conn": "Wireless"
+  },
+  {
+    "ip": "192.168.1.129",
+    "mac": "00:17:88:2b:9a:25",
+    "name": "Unknown-00:17:88:2b:9a:25",
+    "conn": "Unknown"
+  },
+  {
+    "ip": "192.168.1.163",
+    "mac": "74:c6:3b:29:d7:1d",
+    "name": "iHome",
+    "conn": "Wireless"
+  },
+  {
+    "ip": "192.168.1.165",
+    "mac": "ec:1a:59:83:28:11",
+    "name": "Belkin Wemo Motion Sensor",
+    "conn": "Wireless"
+  },
+  {
+    "ip": "192.168.1.168",
+    "mac": "18:b4:30:25:be:e4",
+    "name": "NEST Protect Smoke Alarm",
+    "conn": "Wireless"
+  },
+  {
+    "ip": "192.168.1.169",
+    "mac": "ec:1a:59:7a:02:c5",
+    "name": "Unknown-ec:1a:59:7a:02:c5",
+    "conn": "Unknown"
+  },
+  {
+    "ip": "192.168.1.175",
+    "mac": "08:2e:5f:25:88:e5",
+    "name": "Unknown-08:2e:5f:25:88:e5",
+    "conn": "Unknown"
+  },
+  {
+    "ip": "192.168.1.177",
+    "mac": "e0:76:d0:33:bb:85",
+    "name": "PIX-STAR Photo-frame",
+    "conn": "Wireless"
+  },
+  {
+    "ip": "192.168.1.192",
+    "mac": "f4:f5:d8:d4:eb:12",
+    "name": "Unknown-f4:f5:d8:d4:eb:12",
+    "conn": "Unknown"
+  },
+  {
+    "ip": "192.168.1.196",
+    "mac": "d0:52:a8:00:67:5e",
+    "name": "Smart Things",
+    "conn": "Wired"
+  },
+  {
+    "ip": "192.168.1.205",
+    "mac": "2c:27:d7:3b:e1:05",
+    "name": "Unknown-2c:27:d7:3b:e1:05",
+    "conn": "Unknown"
+  },
+  {
+    "ip": "192.168.1.216",
+    "mac": "e0:76:d0:3f:00:ae",
+    "name": "Unknown-e0:76:d0:3f:00:ae",
+    "conn": "Unknown"
+  },
+  {
+    "ip": "192.168.1.219",
+    "mac": "84:f3:eb:52:42:db",
+    "name": "Unknown-84:f3:eb:52:42:db",
+    "conn": "Unknown"
+  },
+  {
+    "ip": "192.168.1.221",
+    "mac": "88:4a:ea:31:66:9d",
+    "name": "Unknown-88:4a:ea:31:66:9d",
+    "conn": "Unknown"
+  },
+  {
+    "ip": "192.168.1.227",
+    "mac": "50:c7:bf:00:56:39",
+    "name": "TP-Link Smart Plug",
+    "conn": "Wireless"
+  },
+  {
+    "ip": "192.168.1.230",
+    "mac": "7c:70:bc:5d:5e:dc",
+    "name": "Unknown-7c:70:bc:5d:5e:dc",
+    "conn": "Unknown"
+  },
+  {
+    "ip": "192.168.1.236",
+    "mac": "70:5a:0f:e4:9b:c0",
+    "name": "HP Printer",
+    "conn": "Wireless"
+  },
+  {
+    "ip": "192.168.1.239",
+    "mac": "44:65:0d:56:cc:d3",
+    "name": "Amazon Echo",
+    "conn": "Wireless"
+  },
+  {
+    "ip": "192.168.1.245",
+    "mac": "b4:75:0e:ec:e5:a9",
+    "name": "Unknown-b4:75:0e:ec:e5:a9",
+    "conn": "Unknown"
+  },
+  {
+    "ip": "192.168.1.248",
+    "mac": "00:16:6c:ab:6b:88",
+    "name": "Samsung SmartCam",
+    "conn": "Wireless"
+  }
+]
