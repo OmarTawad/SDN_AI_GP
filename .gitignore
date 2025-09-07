@@ -1,7 +1,3 @@
+
 *.pcap
-18-10-27.pcap
-*.pcap
-*.pcap
-*.pcap
-*.pcap
-*.pcap
+__pycache__/
