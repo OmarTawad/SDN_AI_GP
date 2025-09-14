@@ -1,0 +1,89 @@
+seed: 1337
+
+paths:
+  cache_dir: "cache"            # parquet shards + manifests
+  artifacts: "artifacts"        # main model
+  artifacts_fast: "artifacts_fast"  # fast-mode model
+  reports: "reports"
+
+data:
+  top_k_udp_ports: [1900, 53, 123, 80, 443]
+  read_chunk_pkts: 50000
+
+windowing:
+  window_sec: 1.0
+  stride_sec: 0.5
+  micro_bins: 8                # ↓ from 12 → 8 (fast profile request)
+
+features:
+  include_l2_hints: true
+  ssdp_multicast_ipv4: "239.255.255.250"
+  ssdp_multicast_ipv6: "ff02::c"
+  # slimming for static features:
+  static_max_dim: 128          # PCA target dim cap
+  pca_whiten: false
+
+split:
+  train_val_test: [0.7, 0.15, 0.15]
+  # fast iteration splits:
+  thin_val_fraction: 0.5     # thin val = 25% of val for quick checks
+
+sampling:
+  normal_subsample_rate: 0.2   # stratified normal window subsample
+  hard_negative_mining:
+    enabled: true
+    refresh_every_epochs: 2
+    top_k_per_file: 50         # add top-K highest-scored false positives
+
+training:
+  epochs: 10
+  batch_size: 512              # large batch (fast mode)
+  grad_accum_steps: 2          # effective batch = batch_size * grad_accum
+  channels: [64, 96]           # fast backbone per spec
+  kernel_size: 5
+  dropout: 0.1
+  attention_heads: 2
+  mlp_hidden: [256, 64]
+  aux_family_head: true
+  lr: 2.0e-3
+  weight_decay: 1.0e-3
+  early_stop_patience: 4
+  grad_clip: 0.0
+  loss: bce                    # faster than focal
+  class_weight_pos: 3.0
+  focal_gamma: 2.0
+  cosine_lr: true              # cosine annealing
+  amp: true                    # automatic mixed precision
+  dataloader_workers: 4
+  pinned_memory: true
+  cudnn_benchmark: true
+
+logging:
+  save_dir: artifacts_fast      # fast profile writes here
+  save_dir_full: artifacts      # accurate profile (if you switch)
+
+decision:
+    min_attack_windows: 3
+    consecutive_required: 2
+    tau_file: 0.60
+    cooldown_windows: 1
+    plausibility_gate: true
+
+augment:
+  time_warp_pct: 0.1
+  benign_overlay_prob: 0.0     # speed: off
+  header_randomize_prob: 0.1
+
+distillation:
+  enabled: true
+  teacher_logits_path: "cache/lgbm_teacher_logits.parquet"
+  alpha: 0.3                   # weight for distillation loss (0–1)
+  temperature: 2.0
+
+preprocess:
+  shard_max_mb: 64
+  # write schema & manifest:
+  write_schema: true
+  # file pattern to preprocess (used by make preprocess):
+  pcaps_glob: "samples/*.pcap"
+  labels_csv: "labels/labels.csv"
