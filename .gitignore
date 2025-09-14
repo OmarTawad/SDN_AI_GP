@@ -1,4 +1,7 @@
-
+*.venv
 *.pcap
 __pycache__/
 *.py[cod]
+*ryu_env
+*reports/
+*reports_loose
