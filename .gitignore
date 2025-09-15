@@ -1,7 +1,11 @@
 *.venv
-*.pcap
 __pycache__/
 *.py[cod]
 *ryu_env
-*reports/
+reports/**
+!reports/.gitkeep
 *reports_loose
+*.pcap
+!pcaps/*.pcap
+!models/.gitkeep
+!data/processed/.gitkeep
