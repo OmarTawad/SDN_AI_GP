@@ -31,7 +31,7 @@ class DecisionConfig:
     burstiness_multiple: float = 3.0
     # TCP SYN completion threshold (≤ this is bad)
     syn_completion_max: float = 0.10
-    # High-confidence override (disabled by default for safety)
+    # NEW: High-confidence override (gate-independent promotion)
     high_confidence_override: bool = False
     high_conf_tau: float = 0.93
     high_conf_windows: int = 3
@@ -97,6 +97,8 @@ def _build_quiet_baselines(windows: List[WindowObs]) -> Dict[str, float]:
     }
 
 
+# ------------------------ Plausibility gate (safer) ------------------------
+
 # ------------------------ Plausibility gate (low-rate hardened) ------------------------
 
 def _gate_generic(snaps: Dict[str, float], base: Dict[str, float], cfg: DecisionConfig):
@@ -143,18 +145,8 @@ def _gate_generic(snaps: Dict[str, float], base: Dict[str, float], cfg: Decision
         if collapse:
             reasons.append("entropy collapse"); count += 1
 
-    # Burstiness:
-    # Normal rule needs solid mass (>=120 pkts in the window).
-    burst_ok = (total_pkts >= 120.0) and (max_bin >= cfg.burstiness_multiple * med_bin)
-
-    # Fallback for mid-low rate attacks (e.g., ~48 pkts/s):
-    # If rate is decent (>=40/s) and the micro-burst is very sharp,
-    # accept it even without 120+ packets. Use stricter ratio (+1.0).
-    if not burst_ok:
-        if (pkts >= 40.0) and (med_bin >= 2.0) and (max_bin >= (cfg.burstiness_multiple + 1.0) * med_bin):
-            burst_ok = True
-
-    if burst_ok:
+    # Burstiness only counts with enough mass (avoid micro-burst FPs)
+    if (total_pkts >= 120.0) and (max_bin >= cfg.burstiness_multiple * med_bin):
         reasons.append("burstiness"); count += 1
 
     return reasons, count
@@ -184,8 +176,6 @@ def _gate_ssdp(snaps: Dict[str, float]):
         reasons.append("SSDP header repetition"); ok = True
 
     return reasons, ok
-
-
 def _gate_syn(snaps: Dict[str, float], cfg: DecisionConfig):
     """
     TCP SYN-based plausibility: fires for clear SYN floods or very low SYN→SYN/ACK completion.
@@ -220,7 +210,7 @@ def plausibility_gate(snaps: Dict[str, float], base: Dict[str, float], cfg: Deci
     proto_ok = ssdp_ok or syn_ok
 
     # Low-rate safety: protocol hints alone never suffice;
-    # need ≥2 generic reasons, and 'burstiness' only counted if mass (above or fallback).
+    # need ≥2 generic reasons, and 'burstiness' only counted if mass (above).
     if pkts < 50.0:
         return (gen_count >= 2), (gen_reasons if gen_count >= 2 else [])
 
@@ -229,6 +219,9 @@ def plausibility_gate(snaps: Dict[str, float], base: Dict[str, float], cfg: Deci
     if proto_ok and gen_count >= 1:
         return True, (ssdp_reasons if ssdp_ok else syn_reasons) + gen_reasons
     return False, []
+
+
+
 
 
 # ------------------------ State machine decision ------------------------
@@ -388,15 +381,12 @@ def gate_checks(snaps: Dict[str, float], base: Dict[str, float], cfg: DecisionCo
         out["H_ttl_p10"] = float(base.get("H_ttl_p10", 0.0))
     out["entropy_collapse"] = bool(ent_ok)
 
-    # Burstiness (with mid-low-rate fallback mirrored)
+    # Burstiness only with mass
     max_bin = float(snaps.get("max_bin_pkts", 0.0))
     med_bin = float(snaps.get("median_bin_pkts", base.get("median_bin_pkts_med", 1.0)))
     if med_bin <= 0:
         med_bin = max(1.0, float(base.get("median_bin_pkts_med", 1.0)))
     burst_ok = (total_pkts >= 120.0) and (max_bin >= cfg.burstiness_multiple * med_bin)
-    if not burst_ok:
-        if (pkts >= 40.0) and (med_bin >= 2.0) and (max_bin >= (cfg.burstiness_multiple + 1.0) * med_bin):
-            burst_ok = True
     out["burstiness"] = bool(burst_ok)
     out["max_bin_pkts"] = max_bin; out["median_bin_pkts"] = med_bin
 
@@ -420,7 +410,7 @@ def gate_checks(snaps: Dict[str, float], base: Dict[str, float], cfg: DecisionCo
     out["ssdp_multicast"] = multicast_hit; out["ssdp_header_rep"] = header_rep
     out["ssdp_notify_count"] = notify_count; out["ssdp_msearch_count"] = msearch_count; out["ssdp_200ok_count"] = ok200_count
 
-    # SYN quick flags
+    # SYN quick flags (unchanged)
     syn_rate = float(snaps.get("tcp_syn_rate", 0.0))
     completion = snaps.get("tcp_synack_completion", None)
     syn_over_ack = float(snaps.get("tcp_syn_over_synack", 0.0))
@@ -444,3 +434,4 @@ def gate_checks(snaps: Dict[str, float], base: Dict[str, float], cfg: DecisionCo
     else:
         out["gate_pass"] = bool((gen_count >= 2) or (proto_ok and gen_count >= 1))
     return out
+
