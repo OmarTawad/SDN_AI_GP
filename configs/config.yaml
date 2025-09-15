@@ -1,0 +1,113 @@
+seed: 42
+paths:
+  raw_pcap_dir: ../pcaps
+  processed_dir: ../data/processed
+  models_dir: ../models
+  reports_dir: ../reports
+  scaler_path: ../models/feature_scaler.joblib
+  supervised_model_path: ../models/supervised.pt
+  ae_model_path: ../models/autoencoder.pt
+  ae_scaler_path: ../models/ae_scaler.joblib
+  fusion_model_path: ../models/fusion_calibrator.joblib
+  manifest_path: ../data/processed/feature_manifest.json
+  metrics_path: ../reports/metrics_summary.json
+windowing:
+  window_size: 1.0
+  hop_size: 0.5
+  sequence_length: 60
+  sequence_stride: 30
+  max_windows: null
+feature:
+  rolling_window: 5
+  host_history: 20
+  multi_scale_bins: [2, 4, 8]
+  entropy_base: 2
+  enable_protocol_features: true
+  enable_change_features: true
+  enable_host_zscores: true
+  top_k: [1, 3, 5]
+  rolling_zscore_window: 20
+  min_packets_threshold: 1
+  eps: 1.0e-6
+labels:
+  intervals_csv: ../data/attack_intervals.csv
+  default_family: normal
+  family_mapping:
+    normal: 0
+    ssdp: 1
+    syn: 2
+    icmp: 3
+    udp: 4
+    http: 5
+    other: 6
+  attack_families: [ssdp, syn, icmp, udp, http, other]
+data:
+  train_files: []
+  val_files: []
+  test_files: []
+  normal_families: [normal]
+training:
+  supervised:
+    batch_size: 16
+    num_workers: 2
+    max_epochs: 50
+    learning_rate: 0.0005
+    weight_decay: 0.01
+    grad_clip: 1.0
+    bce_pos_weight: 3.0
+    type_loss_weight: 0.4
+    focal_gamma: 2.0
+    early_stopping_patience: 6
+    precision_mode: autocast
+    max_train_batches: null
+    max_val_batches: null
+  autoencoder:
+    batch_size: 16
+    num_workers: 2
+    max_epochs: 80
+    learning_rate: 0.0007
+    weight_decay: 0.0
+    grad_clip: 1.0
+    early_stopping_patience: 8
+    precision_mode: autocast
+    max_train_batches: null
+    max_val_batches: null
+model:
+  supervised:
+    input_dropout: 0.1
+    rnn_type: lstm
+    hidden_size: 128
+    num_layers: 2
+    bidirectional: true
+    dropout: 0.2
+    attention: true
+    attention_heads: 4
+  autoencoder:
+    hidden_size: 128
+    latent_size: 64
+    num_layers: 2
+    dropout: 0.2
+fusion:
+  calibrator: logistic
+  feature_names: [supervised_prob, ae_anomaly, ssdp_share]
+  validation_limit: null
+postprocessing:
+  tau_window: 0.6
+  tau_file: 0.5
+  consecutive_required: 2
+  min_attack_windows: 3
+  cooldown_windows: 1
+  smoothing: 0.1
+  plausibility:
+    ssdp_udp_1900_min_fraction: 0.1
+    syn_min_syn_rate: 5.0
+    icmp_min_rate: 5.0
+    udp_min_rate: 5.0
+    http_min_rate: 2.0
+explainability:
+  shap_background_size: 64
+  top_features: 15
+  attention: true
+live:
+  interface: any
+  flush_seconds: 1.0
