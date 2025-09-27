@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dae"
+version = "0.1.0"
+description = "Autoencoder-based anomaly detection for streaming PCAP data"
+readme = "README.md"
+authors = [
+    {name = "SDN IoT Simulated Team", email = "team@example.com"}
+]
+license = {text = "MIT"}
+requires-python = ">=3.9"
+dependencies = [
+    "numpy>=1.24,<2.0",
+    "pandas>=2.0,<3.0",
+    "pyarrow>=12.0",
+    "scipy>=1.10",
+    "scikit-learn>=1.2",
+    "PyYAML>=6.0",
+    "tqdm>=4.65",
+    "scapy>=2.5",
+    "torch>=2.1",
+    "joblib>=1.2",
+    "structlog>=23.1"
+]
+
+[project.optional-dependencies]
+plots = ["matplotlib>=3.7"]
+tests = ["pytest>=7.3", "pytest-mock>=3.10"]
+
+[project.urls]
+Homepage = "https://example.com/dae"
+Repository = "https://example.com/dae.git"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -1,0 +1,10 @@
+{
+  "method": "quantile",
+  "threshold": 0.08212879896163935,
+  "params": {
+    "quantile": 0.995,
+    "min_consecutive": 4,
+    "cooldown": 1,
+    "min_attack_windows": 4
+  }
+}
