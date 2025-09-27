@@ -1,0 +1,102 @@
+paths:
+  raw_dir: "data/raw"
+  windows_dir: "data/windows"
+  artifacts_dir: "data/artifacts"
+  reports_dir: "data/reports"
+
+extract:
+  window_seconds: 1.0
+  stride_seconds: 0.5
+  max_packets_per_file: 0
+  parallel_workers: 2
+  save_format: "parquet"
+  batch_rows: 20000
+
+features:
+  include:
+    - pkt_count
+    - byte_count
+    - pps
+    - bps
+    - mean_pkt_len
+    - std_pkt_len
+    - min_pkt_len
+    - max_pkt_len
+    - mean_iat
+    - std_iat
+    - tcp_count
+    - udp_count
+    - icmp_count
+    - tcp_syn
+    - tcp_ack
+    - tcp_rst
+    - tcp_fin
+    - src_ip_entropy
+    - dst_ip_entropy
+    - src_port_entropy
+    - dst_port_entropy
+    - unique_src_ips
+    - unique_dst_ips
+    - unique_src_ports
+    - unique_dst_ports
+  ratios: true
+
+preprocess:
+  scaler: "RobustScaler"
+  clip_quantiles: [0.001, 0.999]
+  train_val_split: 0.9
+  shuffle: true
+  seed: 1337
+  log_features:
+    - pkt_count
+    - byte_count
+    - pps
+    - bps
+    - tcp_count
+    - udp_count
+    - icmp_count
+    - tcp_syn
+    - tcp_ack
+    - tcp_rst
+    - tcp_fin
+
+model:
+  type: "DenoisingAE"
+  input_dim: null
+  hidden: [128, 64, 32]
+  latent_dim: 16
+  activation: "ReLU"
+  dropout: 0.1
+  l2: 1e-5
+
+train:
+  device: "cpu"
+  num_threads: 2
+  batch_size: 1024
+  epochs: 30
+  lr: 1e-3
+  early_stopping_patience: 5
+  gradient_clip_norm: 1.0
+  noise_std: 0.01
+  mixed_precision: false
+
+threshold:
+  method: "quantile"
+  quantile: 0.995
+  trim_quantile: 0.999
+  min_consecutive: 4
+  cooldown: 1
+  min_attack_windows: 4
+  infer_clamp_quantile: null
+  infer_stats_quantile: 0.995
+  infer_stats_scale: 2.0
+  infer_clamp_floor: 0.5
+  source_quantile: 0.999
+  source_scale: 5.0
+  auto_calibrate_quantile: 0.999
+  auto_calibrate_scale: 3.0
+  auto_calibrate_cap: 1.5
+
+infer:
+  batch_windows: 8192
+  topk_pct: 0.10
