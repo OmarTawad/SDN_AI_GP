@@ -1,0 +1,8 @@
+[
+  {
+    "mac": "aa:bb:cc:dd:ee:ff",
+    "avg_score": 1.5649909526109695,
+    "suspicious_windows": 16,
+    "mean_ip_count_per_window": 3.6875
+  }
+]
