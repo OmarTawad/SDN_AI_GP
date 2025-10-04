@@ -1,16 +1,34 @@
 # infer.py
 from __future__ import annotations
-import os, argparse, glob, json, csv
+
+import os
+
+# Constrain BLAS threads early for 2 vCPU deployments
+os.environ.setdefault("OMP_NUM_THREADS", "2")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "2")
+os.environ.setdefault("MKL_NUM_THREADS", "2")
+os.environ.setdefault("NUMEXPR_NUM_THREADS", "2")
+os.environ.setdefault("TORCH_CPP_LOG_LEVEL", "ERROR")
+
+import argparse
+import glob
+import json
+import csv
+import math
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from typing import List, Dict, Tuple
-
-# Silence backend spam like NNPACK warnings
-os.environ.setdefault("TORCH_CPP_LOG_LEVEL", "ERROR")
 
 import numpy as np
 import torch
 import yaml
 from tqdm import tqdm
+
+torch.set_num_threads(min(2, max(1, os.cpu_count() or 1)))
+try:
+    torch.set_num_interop_threads(1)
+except AttributeError:
+    pass
 
 from data.pcap_reader import iter_rows_from_pcap
 from data.windowizer import iter_windows
@@ -35,28 +53,31 @@ def _load_artifacts(save_dir: str, cfg: dict):
     # scaler (backward-compatible custom saver/loader)
     scaler = RobustScaler.load(save_dir)
 
-    # slimmer
-    slimmer = StaticSlimmer(out_dim=1)
+    meta_path = os.path.join(save_dir, "feature_model_meta.json")
+    with open(meta_path, "r", encoding="utf-8") as f:
+        meta = json.load(f)
+
+    static_dim = int(meta.get("static_dim", scaler.n_features_ or 0))
+    slimmer = StaticSlimmer(out_dim=static_dim)
     slimmer.load(save_dir)
 
-    # model dims
-    meta_path = os.path.join(save_dir, "feature_model_meta.json")
-    with open(meta_path, "r") as f:
-        meta = json.load(f)
     seq_in_dim = int(meta["seq_in_dim"])
-    static_dim = int(meta["static_dim"])
+    channels = tuple(meta.get("channels", cfg["training"]["channels"]))
+    kernel_size = int(meta.get("kernel_size", cfg["training"]["kernel_size"]))
+    dropout = float(meta.get("dropout", cfg["training"]["dropout"]))
+    mlp_hidden = tuple(meta.get("mlp_hidden", cfg["training"]["mlp_hidden"]))
+    aux_family_head = bool(meta.get("aux_family_head", cfg["training"].get("aux_family_head", False)))
+    n_families = int(meta.get("n_families", 6))
 
-    # model
-    trn = cfg["training"]
     model = FastDetector(
         seq_in_dim=seq_in_dim,
         static_dim=static_dim,
-        channels=tuple(trn["channels"]),
-        k=trn["kernel_size"],
-        drop=trn["dropout"],
-        mlp_hidden=tuple(trn["mlp_hidden"]),
-        aux_family_head=bool(trn.get("aux_family_head", False)),
-        n_families=6
+        channels=channels,
+        k=kernel_size,
+        drop=dropout,
+        mlp_hidden=mlp_hidden,
+        aux_family_head=aux_family_head,
+        n_families=n_families,
     )
     state = torch.load(os.path.join(save_dir, "model_best.pt"), map_location="cpu")
     model.load_state_dict(state["model"])
@@ -212,6 +233,51 @@ def _build_snapshots(win_rows, W, M, extras, snaps, ssdp_v4, ssdp_v6):
     return out
 
 
+def _summarize_actor_suspiciousness(
+    tracker: Dict[str, Dict[str, float]],
+    window_sec: float,
+    key_label: str,
+) -> List[Dict[str, float]]:
+    summary: List[Dict[str, float]] = []
+    if not tracker:
+        return summary
+
+    for actor, stats in tracker.items():
+        total_packets = int(stats.get("total_packets", 0) or 0)
+        if total_packets <= 0:
+            continue
+        prob_weighted = float(stats.get("prob_weighted_packets", 0.0))
+        windows = int(stats.get("windows", 0) or 0)
+        high_windows = int(stats.get("high_prob_windows", 0) or 0)
+        max_prob = float(stats.get("max_prob", 0.0))
+        max_packets = int(stats.get("max_packets", 0) or 0)
+
+        mean_prob = prob_weighted / total_packets
+        high_frac = high_windows / max(1, windows)
+        packets_per_sec_peak = max_packets / max(window_sec, 1e-6)
+
+        score_components = (
+            0.6 * mean_prob
+            + 0.25 * max_prob
+            + 0.15 * min(1.0, high_frac)
+        )
+        score = score_components * math.log1p(total_packets)
+        summary.append(
+            {
+                key_label: actor,
+                "score": round(score, 6),
+                "mean_prob": round(mean_prob, 6),
+                "max_prob": round(max_prob, 6),
+                "windows_with_activity": windows,
+                "high_prob_windows": high_windows,
+                "total_packets": total_packets,
+                "max_packets_in_window": max_packets,
+                "peak_packets_per_sec": round(packets_per_sec_peak, 3),
+            }
+        )
+
+    summary.sort(key=lambda row: row["score"], reverse=True)
+    return summary
 
 
 # ------------------------- main per-file routine -------------------------
@@ -224,8 +290,10 @@ def run_on_pcap(
     slimmer,
     meta: dict,
     T: float,
+    tau: float,
     out_dir: str,
     decid_cfg: DecisionConfig,
+    device: torch.device,
 ) -> Tuple[Dict, str, str]:
     """
     Streams the pcap, computes features, scores windows, applies robust file-level decision.
@@ -233,11 +301,16 @@ def run_on_pcap(
     """
     os.makedirs(out_dir, exist_ok=True)
 
+    # Track per-MAC and per-IP activity for later suspiciousness ranking
+    mac_tracker: Dict[str, Dict[str, float]] = {}
+    ip_tracker: Dict[str, Dict[str, float]] = {}
+    ip_mac_counter: Dict[str, Counter] = defaultdict(Counter)
+
     # Windowing & feature config
     W = float(cfg["windowing"]["window_sec"])
     S = float(cfg["windowing"]["stride_sec"])
-    M = int(cfg["windowing"]["micro_bins"])
-    top_ports = list(cfg["data"]["top_k_udp_ports"])
+    M = int(meta.get("micro_bins", cfg["windowing"]["micro_bins"]))
+    top_ports = list(meta.get("top_k_udp_ports", cfg["data"]["top_k_udp_ports"]))
     ssdp_v4 = cfg["features"]["ssdp_multicast_ipv4"]
     ssdp_v6 = cfg["features"]["ssdp_multicast_ipv6"]
 
@@ -273,17 +346,19 @@ def run_on_pcap(
             )
 
             # Scale + slim static
-            names_stub = [f"f_{i}" for i in range(static_vec.size)]
+            feature_names = getattr(slimmer, "src_names", None) or scaler.feature_names_
+            if feature_names is None or len(feature_names) != static_vec.size:
+                feature_names = [f"f_{i}" for i in range(static_vec.size)]
             try:
-                stat_scaled = scaler.transform(static_vec.reshape(1, -1), names_stub)
+                stat_scaled = scaler.transform(static_vec.reshape(1, -1), feature_names)
             except Exception:
                 # Skip this window if schema mismatch; safer than garbage scores
                 continue
             stat_slim = slimmer.transform(stat_scaled)
 
             # Tensors
-            seq_t = torch.from_numpy(seq).unsqueeze(0).float()     # [1,M,Kseq]
-            static_t = torch.from_numpy(stat_slim).float()         # [1,Ks]
+            seq_t = torch.from_numpy(seq).unsqueeze(0).to(device).float()
+            static_t = torch.from_numpy(stat_slim).to(device).float()
 
             with torch.no_grad():
                 out = model(seq_t, static_t)
@@ -298,6 +373,65 @@ def run_on_pcap(
                     peak_bin = int(np.argmax(attn))
                 else:
                     peak_bin = 0
+
+            # Per-actor contribution within this window
+            mac_counts: Dict[str, int] = {}
+            ip_counts: Dict[str, int] = {}
+            for row in win_rows:
+                mac_raw = row.get("src_mac") or ""
+                ip_raw = row.get("src_ip") or ""
+
+                mac = str(mac_raw).lower() if mac_raw else ""
+                if mac and mac not in ("ff:ff:ff:ff:ff:ff", "00:00:00:00:00:00"):
+                    mac_counts[mac] = mac_counts.get(mac, 0) + 1
+
+                ip = str(ip_raw).strip()
+                if ip:
+                    ip_counts[ip] = ip_counts.get(ip, 0) + 1
+                    if mac:
+                        ip_mac_counter[ip][mac] += 1
+
+            if mac_counts:
+                for mac, pkt_count in mac_counts.items():
+                    stats = mac_tracker.setdefault(
+                        mac,
+                        {
+                            "total_packets": 0,
+                            "prob_weighted_packets": 0.0,
+                            "windows": 0,
+                            "high_prob_windows": 0,
+                            "max_prob": 0.0,
+                            "max_packets": 0,
+                        },
+                    )
+                    stats["total_packets"] += pkt_count
+                    stats["prob_weighted_packets"] += prob * pkt_count
+                    stats["windows"] += 1
+                    stats["max_prob"] = max(stats["max_prob"], prob)
+                    stats["max_packets"] = max(stats["max_packets"], pkt_count)
+                    if prob >= tau and pkt_count >= 3:
+                        stats["high_prob_windows"] += 1
+
+            if ip_counts:
+                for ip, pkt_count in ip_counts.items():
+                    stats = ip_tracker.setdefault(
+                        ip,
+                        {
+                            "total_packets": 0,
+                            "prob_weighted_packets": 0.0,
+                            "windows": 0,
+                            "high_prob_windows": 0,
+                            "max_prob": 0.0,
+                            "max_packets": 0,
+                        },
+                    )
+                    stats["total_packets"] += pkt_count
+                    stats["prob_weighted_packets"] += prob * pkt_count
+                    stats["windows"] += 1
+                    stats["max_prob"] = max(stats["max_prob"], prob)
+                    stats["max_packets"] = max(stats["max_packets"], pkt_count)
+                    if prob >= tau and pkt_count >= 3:
+                        stats["high_prob_windows"] += 1
 
             # Build plausibility snapshots (for file decision)
             ssdp_snap = _build_snapshots(win_rows, W, M, extras, snaps, ssdp_v4, ssdp_v6)
@@ -329,6 +463,55 @@ def run_on_pcap(
         cfg=decid_cfg
     )
 
+    mac_summary = _summarize_actor_suspiciousness(mac_tracker, W, "mac")
+    ip_summary = _summarize_actor_suspiciousness(ip_tracker, W, "ip")
+    mac_summary_map = {row["mac"]: row for row in mac_summary}
+
+    most_suspicious_ip = ip_summary[0] if ip_summary else None
+    most_suspicious_mac = None
+    if most_suspicious_ip:
+        if isinstance(most_suspicious_ip, dict):
+            most_suspicious_ip = dict(most_suspicious_ip)
+        ip_val = most_suspicious_ip["ip"]
+        mac_counter = ip_mac_counter.get(ip_val)
+        best_mac = None
+        if mac_counter:
+            best_mac = mac_counter.most_common(1)[0][0]
+        if best_mac:
+            mac_row = mac_summary_map.get(best_mac)
+            if mac_row:
+                most_suspicious_mac = {**mac_row, "associated_ip": ip_val}
+            else:
+                most_suspicious_mac = {
+                    "mac": best_mac,
+                    "associated_ip": ip_val,
+                    "score": None,
+                    "mean_prob": None,
+                    "max_prob": None,
+                    "windows_with_activity": None,
+                    "high_prob_windows": None,
+                    "total_packets": ip_mac_counter[ip_val][best_mac],
+                    "max_packets_in_window": None,
+                    "peak_packets_per_sec": None,
+                }
+            most_suspicious_ip["top_mac"] = best_mac
+
+    if most_suspicious_mac is None and mac_summary:
+        most_suspicious_mac = dict(mac_summary[0])
+
+    if isinstance(most_suspicious_mac, dict) and "associated_ip" not in most_suspicious_mac:
+        mac_val = most_suspicious_mac.get("mac")
+        if mac_val:
+            best_ip = None
+            best_count = 0
+            for ip_val, counter in ip_mac_counter.items():
+                count = counter.get(mac_val, 0)
+                if count > best_count:
+                    best_count = count
+                    best_ip = ip_val
+            if best_ip:
+                most_suspicious_mac["associated_ip"] = best_ip
+
     per_file = {
         "file": file_dec.file,
         "decision": file_dec.decision,
@@ -336,12 +519,65 @@ def run_on_pcap(
         "num_attack_windows": int(file_dec.num_attack_windows),
         "max_prob": float(round(file_dec.max_prob, 6)),
         "gate_reasons": file_dec.gate_reasons,
+        "most_suspicious_mac": most_suspicious_mac,
+        "most_suspicious_ip": most_suspicious_ip,
     }
+    if mac_summary:
+        per_file["suspicious_macs"] = mac_summary[:5]
+    if ip_summary:
+        per_file["suspicious_ips"] = ip_summary[:5]
     with open(json_path, "w") as fj:
         json.dump(per_file, fj, indent=2)
 
-    print(f"[{os.path.basename(pcap)}] decision={per_file['decision']} max_prob={per_file['max_prob']} "
-          f"num_attack_windows={per_file['num_attack_windows']}")
+    mac_csv_path = None
+    if mac_summary:
+        mac_csv_path = os.path.join(out_dir, f"{os.path.splitext(base)[0]}_macs.csv")
+        with open(mac_csv_path, "w", newline="") as fmac:
+            writer = csv.DictWriter(
+                fmac,
+                fieldnames=[
+                    "mac",
+                    "score",
+                    "mean_prob",
+                    "max_prob",
+                    "windows_with_activity",
+                    "high_prob_windows",
+                    "total_packets",
+                    "max_packets_in_window",
+                    "peak_packets_per_sec",
+                ],
+            )
+            writer.writeheader()
+            for row in mac_summary:
+                writer.writerow(row)
+
+    if ip_summary:
+        ip_csv_path = os.path.join(out_dir, f"{os.path.splitext(base)[0]}_ips.csv")
+        with open(ip_csv_path, "w", newline="") as fip:
+            writer = csv.DictWriter(
+                fip,
+                fieldnames=[
+                    "ip",
+                    "score",
+                    "mean_prob",
+                    "max_prob",
+                    "windows_with_activity",
+                    "high_prob_windows",
+                    "total_packets",
+                    "max_packets_in_window",
+                    "peak_packets_per_sec",
+                ],
+            )
+            writer.writeheader()
+            for row in ip_summary:
+                writer.writerow(row)
+
+    mac_print = most_suspicious_mac.get("mac") if isinstance(most_suspicious_mac, dict) else "n/a"
+    ip_print = most_suspicious_ip.get("ip") if isinstance(most_suspicious_ip, dict) else "n/a"
+    print(
+        f"[{os.path.basename(pcap)}] decision={per_file['decision']} max_prob={per_file['max_prob']} "
+        f"num_attack_windows={per_file['num_attack_windows']} top_mac={mac_print} top_ip={ip_print}"
+    )
     return per_file, csv_path, json_path
 
 
@@ -350,14 +586,14 @@ def run_on_pcap(
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", required=True)
-    ap.add_argument("--pcaps", required=True, help='Glob like "samples/*.pcap" or a file path')
-    ap.add_argument("--out", required=True, help="Reports output directory")
+    ap.add_argument("--pcaps", default=None, help='Glob like "samples/*.pcap" or file path; defaults to config preprocess.pcaps_glob')
+    ap.add_argument("--out", default=None, help="Reports output directory (defaults to config paths.reports_dir)")
     # Optional overrides for robust file-decision thresholds/rules
     ap.add_argument("--tau-high", type=float, default=None)
     ap.add_argument("--tau-low", type=float, default=None)
     ap.add_argument("--min-attack-windows", type=int, default=None)
     ap.add_argument("--consecutive-required", type=int, default=None)
-    ap.add_argument("--cooldown-windows", type=float, default=None)
+    ap.add_argument("--cooldown-windows", type=int, default=None)
     ap.add_argument("--disable-gate", action="store_true")
     args = ap.parse_args()
 
@@ -365,38 +601,48 @@ def main():
         cfg = yaml.safe_load(f)
 
     # Load artifacts
-    save_dir = cfg["logging"]["save_dir"]
+    save_dir = cfg["paths"]["artifacts_dir"]
     model, scaler, slimmer, meta, calib = _load_artifacts(save_dir, cfg)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
     T = float(calib.get("temperature", 1.0))
+    tau = float(calib.get("threshold", 0.5))
 
-    # DecisionConfig defaults from your task requirements
+    # DecisionConfig defaults sourced from config with sane fallbacks
+    dec_section = cfg.get("decision", {})
     dec_cfg = DecisionConfig(
-        tau_high=0.70,
-        tau_low=0.55,
-        min_attack_windows=3,
-        consecutive_required=2,
-        cooldown_windows=1,
-        enable_gate=True,
-        warmup_windows=60,
-        abs_pkts_per_s_cap=1500.0,
-        burstiness_multiple=3.0,
-        syn_completion_max=0.10
+        tau_high=float(dec_section.get("tau_high", 0.70)),
+        tau_low=float(dec_section.get("tau_low", 0.55)),
+        min_attack_windows=int(dec_section.get("min_attack_windows", 3)),
+        consecutive_required=int(dec_section.get("consecutive_required", 2)),
+        cooldown_windows=int(dec_section.get("cooldown_windows", 1)),
+        enable_gate=bool(dec_section.get("enable_gate", True)),
+        warmup_windows=int(dec_section.get("warmup_windows", 60)),
+        abs_pkts_per_s_cap=float(dec_section.get("abs_pkts_per_s_cap", 1500.0)),
+        burstiness_multiple=float(dec_section.get("burstiness_multiple", 3.0)),
+        syn_completion_max=float(dec_section.get("syn_completion_max", 0.10)),
+        high_confidence_override=bool(dec_section.get("high_confidence_override", False)),
+        high_conf_tau=float(dec_section.get("high_conf_tau", 0.93)),
+        high_conf_windows=int(dec_section.get("high_conf_windows", 3)),
+        min_pkts_per_s_for_override=float(dec_section.get("min_pkts_per_s_for_override", 3.0)),
     )
     # Allow optional overrides via CLI
     if args.tau_high is not None:               dec_cfg.tau_high = float(args.tau_high)
     if args.tau_low is not None:                dec_cfg.tau_low = float(args.tau_low)
     if args.min_attack_windows is not None:     dec_cfg.min_attack_windows = int(args.min_attack_windows)
     if args.consecutive_required is not None:   dec_cfg.consecutive_required = int(args.consecutive_required)
-    if args.cooldown_windows is not None:       dec_cfg.cooldown_windows = float(args.cooldown_windows)
+    if args.cooldown_windows is not None:       dec_cfg.cooldown_windows = int(args.cooldown_windows)
     if args.disable_gate:                       dec_cfg.enable_gate = False
 
     # Expand pcaps
-    pcaps = sorted(glob.glob(args.pcaps)) if any(ch in args.pcaps for ch in "*?[]") else [args.pcaps]
-    assert pcaps, f"No pcaps matched {args.pcaps}"
-    os.makedirs(args.out, exist_ok=True)
+    pcaps_arg = args.pcaps or cfg["preprocess"]["pcaps_glob"]
+    pcaps = sorted(glob.glob(pcaps_arg)) if any(ch in pcaps_arg for ch in "*?[]") else [pcaps_arg]
+    assert pcaps, f"No pcaps matched {pcaps_arg}"
+    reports_dir = args.out or cfg["paths"]["reports_dir"]
+    os.makedirs(reports_dir, exist_ok=True)
 
     for p in tqdm(pcaps, desc="PCAPs", unit="file"):
-        run_on_pcap(p, cfg, model, scaler, slimmer, meta, T, args.out, dec_cfg)
+        run_on_pcap(p, cfg, model, scaler, slimmer, meta, T, tau, reports_dir, dec_cfg, device)
 
 
 if __name__ == "__main__":

@@ -61,6 +61,27 @@ This repository provides a production-ready pipeline for detecting distributed d
    dos-detector batch-infer --pcaps "pcaps/*.pcap" --out reports/
    ```
 
+## Identify suspicious actors from feature CSVs
+
+Use the PyTorch-based CLI to run anomaly scoring on pre-extracted features and surface the most suspicious MAC/IP actors:
+
+```bash
+python scripts/detect_and_identify.py \
+  --csv samples/example_extracted_features.csv \
+  --model-path models/dosnet_best.pt \
+  --scaler-path models/scaler.joblib \
+  --batch-size 8192 \
+  --alpha-model 0.6 \
+  --alpha-behavior 0.4 \
+  --window-sec 5 \
+  --min-windows 2 \
+  --window-score-threshold 0.6 \
+  --mac-score-thresh 0.7 \
+  --device cpu
+```
+
+The command prints a ranked table of actors, saves CSV/JSON summaries under `results/`, and emits an additional `results/identify_summary.json` bundle for downstream automation.
+
 ## Configuration
 
 All tunable parameters (window size, hop, feature toggles, model dimensions, training hyperparameters, gating thresholds) live in `configs/config.yaml`. Edit the YAML or supply overrides via environment variables to adapt to new datasets or operational requirements.

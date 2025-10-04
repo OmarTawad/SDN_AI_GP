@@ -5,6 +5,7 @@ from typing import Dict, List, Tuple
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import yaml
 from sklearn.metrics import (
     roc_auc_score, average_precision_score, precision_recall_curve,
     confusion_matrix, classification_report
@@ -103,21 +104,30 @@ def detection_latency(json_paths: List[str], labels_csv: str) -> Dict:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--reports_dir", required=True, help="Directory containing *_windows.csv and *.json from infer.py")
-    ap.add_argument("--labels", required=True, help="labels.csv")
-    ap.add_argument("--out", default="reports", help="Where to write summary.json and plots")
+    ap.add_argument("--config", default="config.yaml", help="Path to config.yaml for default paths")
+    ap.add_argument("--reports_dir", default=None, help="Directory with infer outputs; defaults to config paths.reports_dir")
+    ap.add_argument("--labels", default=None, help="labels.csv path; defaults to config preprocess.labels_csv")
+    ap.add_argument("--out", default=None, help="Where to write summary.json and plots; defaults to reports_dir")
     args = ap.parse_args()
 
-    os.makedirs(args.out, exist_ok=True)
-    csvs = sorted(glob.glob(os.path.join(args.reports_dir, "*_windows.csv")))
-    jsons = sorted(glob.glob(os.path.join(args.reports_dir, "*.json")))
+    cfg = {}
+    if args.config and os.path.exists(args.config):
+        cfg = yaml.safe_load(open(args.config, "r", encoding="utf-8"))
 
-    wm = window_metrics(csvs, args.labels)
-    fm = file_metrics(jsons, args.labels)
-    dl = detection_latency(jsons, args.labels)
+    reports_dir = args.reports_dir or cfg.get("paths", {}).get("reports_dir", "reports")
+    labels_path = args.labels or cfg.get("preprocess", {}).get("labels_csv", "labels/labels.csv")
+    out_dir = args.out or reports_dir
+
+    os.makedirs(out_dir, exist_ok=True)
+    csvs = sorted(glob.glob(os.path.join(reports_dir, "*_windows.csv")))
+    jsons = sorted(glob.glob(os.path.join(reports_dir, "*.json")))
+
+    wm = window_metrics(csvs, labels_path)
+    fm = file_metrics(jsons, labels_path)
+    dl = detection_latency(jsons, labels_path)
 
     summary = {"window_metrics": wm, "file_metrics": fm, "detection_latency": dl}
-    with open(os.path.join(args.out, "summary.json"), "w") as f:
+    with open(os.path.join(out_dir, "summary.json"), "w") as f:
         json.dump(summary, f, indent=2)
 
     # PR curve plot
@@ -127,7 +137,7 @@ def main():
         plt.xlabel("Recall")
         plt.ylabel("Precision")
         plt.title("Precision-Recall Curve")
-        plt.savefig(os.path.join(args.out, "pr_curve.png"), bbox_inches="tight")
+        plt.savefig(os.path.join(out_dir, "pr_curve.png"), bbox_inches="tight")
         plt.close()
 
     # Confusion matrix plot
@@ -141,10 +151,10 @@ def main():
     for i in range(2):
         for j in range(2):
             plt.text(j, i, cm[i,j], ha="center", va="center", color="black")
-    plt.savefig(os.path.join(args.out, "confusion_matrix.png"), bbox_inches="tight")
+    plt.savefig(os.path.join(out_dir, "confusion_matrix.png"), bbox_inches="tight")
     plt.close()
 
-    print("Saved evaluation summary to", os.path.join(args.out, "summary.json"))
+    print("Saved evaluation summary to", os.path.join(out_dir, "summary.json"))
 
 if __name__ == "__main__":
     main()
