@@ -9,18 +9,29 @@ from pathlib import Path
 from typing import Optional
 
 import typer
-from torch.utils.data import DataLoader
 
 from .config import load_config
-from .data.dataset import SequenceDataset, collate_fn
 from .data.processor import FeaturePipeline
-from .fusion import FusionSample, ScoreFusion
 from .inference.pipeline import InferencePipeline
-from .training.autoencoder_trainer import AutoencoderTrainer
 from .training.supervised_trainer import SupervisedTrainer
-from .utils.io import ensure_dir, load_dataframe
+from .utils.io import ensure_dir
 
 app = typer.Typer(add_completion=False)
+
+
+def _format_summary(report: dict, name: str) -> str:
+    """Return a compact CLI summary for a single inference run."""
+
+    return " ".join(
+        [
+            f"[{name}]",
+            f"decision={report.get('final_decision', 'n/a')}",
+            f"max_prob={report.get('max_prob', 0.0):.6f}",
+            f"num_attack_windows={report.get('num_attack_windows', 0)}",
+            f"top_mac={report.get('top_mac') or 'n/a'}",
+            f"top_ip={report.get('top_ip') or 'n/a'}",
+        ]
+    )
 
 
 def _resolve_pcaps(pattern: str) -> list[Path]:
@@ -57,60 +68,6 @@ def train_supervised(config_path: Path = typer.Option(Path("configs/config.yaml"
     typer.echo(json.dumps(metrics, indent=2))
 
 
-@app.command("train-ae")
-def train_autoencoder(config_path: Path = typer.Option(Path("configs/config.yaml"), help="Configuration path")) -> None:
-    """Train the sequence autoencoder."""
-
-    config = load_config(config_path)
-    trainer = AutoencoderTrainer(config)
-    metrics = trainer.train()
-    typer.echo(json.dumps(metrics, indent=2))
-
-
-@app.command("calibrate-fusion")
-def calibrate_fusion(config_path: Path = typer.Option(Path("configs/config.yaml"), help="Configuration path")) -> None:
-    """Calibrate the logistic fusion layer on validation data."""
-
-    config = load_config(config_path)
-    pipeline = InferencePipeline(config)
-    val_files = config.data.val_files or [entry["pcap"] for entry in pipeline.manifest.get("frames", [])]
-    samples: list[FusionSample] = []
-    limit = config.fusion.validation_limit
-    for name in val_files:
-        path = config.paths.processed_dir / f"{Path(name).stem}.parquet"
-        if not path.exists():
-            typer.echo(f"Skipping missing processed file: {path}")
-            continue
-        frame = load_dataframe(path)
-        features_supervised = frame.copy()
-        features_autoencoder = frame.copy()
-        features_supervised[pipeline.feature_columns] = pipeline.scaler.transform(frame[pipeline.feature_columns])
-        features_autoencoder[pipeline.feature_columns] = pipeline.ae_scaler.transform(frame[pipeline.feature_columns])
-        sup_dataset = SequenceDataset([features_supervised], pipeline.feature_columns, config.labels.family_mapping, config.windowing)
-        ae_dataset = SequenceDataset([features_autoencoder], pipeline.feature_columns, config.labels.family_mapping, config.windowing)
-        sup_loader = DataLoader(sup_dataset, batch_size=1, shuffle=False, collate_fn=collate_fn)
-        ae_loader = DataLoader(ae_dataset, batch_size=1, shuffle=False, collate_fn=collate_fn)
-        window_store = pipeline._run_supervised(frame, sup_loader)
-        pipeline._run_autoencoder(ae_loader, window_store)
-        results = pipeline._assemble_results(frame, window_store)
-        for entry in results:
-            row = frame.loc[frame["window_index"] == entry["index"]]
-            label = int(row["attack"].iloc[0]) if not row.empty else 0
-            normalized = max(0.0, (entry["ae_error"] - pipeline.ae_baseline.get("ae_error_mean", 0.0)) / max(pipeline.ae_baseline.get("ae_error_std", 1.0), 1e-6))
-            sample_features = [entry["supervised_prob"], normalized, float(entry["features"].get("ssdp_share", 0.0))]
-            samples.append(FusionSample(features=sample_features, label=label))
-            if limit is not None and len(samples) >= limit:
-                break
-        if limit is not None and len(samples) >= limit:
-            break
-    if not samples:
-        raise typer.BadParameter("No validation samples available for fusion calibration.")
-    fusion = ScoreFusion(config.fusion.feature_names)
-    fusion.fit(samples)
-    fusion.save(config.paths.fusion_model_path)
-    typer.echo(f"Saved fusion calibrator → {config.paths.fusion_model_path}")
-
-
 @app.command()
 def infer(
     pcap: Path = typer.Argument(..., help="Path to PCAP file"),
@@ -125,6 +82,7 @@ def infer(
     ensure_dir(out.parent)
     out.write_text(json.dumps(report, indent=2), encoding="utf-8")
     typer.echo(f"Wrote inference report → {out}")
+    typer.echo(_format_summary(report, pcap.name))
 
 
 @app.command("batch-infer")
@@ -143,6 +101,7 @@ def batch_infer(
         target = out_dir / f"{path.stem}.json"
         target.write_text(json.dumps(report, indent=2), encoding="utf-8")
         typer.echo(f"→ {target}")
+        typer.echo(_format_summary(report, path.name))
 
 
 if __name__ == "__main__":
