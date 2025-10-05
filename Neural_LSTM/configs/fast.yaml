@@ -6,9 +6,6 @@ paths:
   reports_dir: ../reports
   scaler_path: ../models/feature_scaler.joblib
   supervised_model_path: ../models/supervised.pt
-  ae_model_path: ../models/autoencoder.pt
-  ae_scaler_path: ../models/ae_scaler.joblib
-  fusion_model_path: ../models/fusion_calibrator.joblib
   manifest_path: ../data/processed/feature_manifest.json
   metrics_path: ../reports/metrics_summary.json
 windowing:
@@ -71,17 +68,6 @@ training:
     precision_mode: autocast
     max_train_batches: null
     max_val_batches: null
-  autoencoder:
-    batch_size: 16
-    num_workers: 4
-    max_epochs: 80
-    learning_rate: 0.0007
-    weight_decay: 0.0
-    grad_clip: 1.0
-    early_stopping_patience: 8
-    precision_mode: autocast
-    max_train_batches: null
-    max_val_batches: null
 model:
   supervised:
     input_dropout: 0.1
@@ -92,18 +78,6 @@ model:
     dropout: 0.2
     attention: true
     attention_heads: 4
-  autoencoder:
-    hidden_size: 128
-    latent_size: 64
-    num_layers: 2
-    dropout: 0.2
-fusion:
-  calibrator: logistic
-  feature_names:
-  - supervised_prob
-  - ae_anomaly
-  - ssdp_share
-  validation_limit: null
 postprocessing:
   tau_window: 0.6
   tau_file: 0.5
