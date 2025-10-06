@@ -12,6 +12,5 @@ reports/**
 !pcaps/*.pcap
 !models/.gitkeep
 !data/processed/.gitkeep
-*models
 *processed
 *release
