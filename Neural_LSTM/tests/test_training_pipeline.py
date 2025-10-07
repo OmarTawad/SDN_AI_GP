@@ -2,10 +2,11 @@
 from pathlib import Path
 
 from dos_detector.config import load_config
-from dos_detector.data.processor import FeaturePipeline
+import pandas as pd
+
 from dos_detector.inference.pipeline import InferencePipeline
-from dos_detector.training.autoencoder_trainer import AutoencoderTrainer
 from dos_detector.training.supervised_trainer import SupervisedTrainer
+from dos_detector.utils.io import save_json
 
 
 def test_end_to_end_training(tmp_path):
@@ -15,9 +16,6 @@ def test_end_to_end_training(tmp_path):
     config.paths.reports_dir = tmp_path / "reports"
     config.paths.scaler_path = config.paths.models_dir / "scaler.joblib"
     config.paths.supervised_model_path = config.paths.models_dir / "supervised.pt"
-    config.paths.ae_model_path = config.paths.models_dir / "autoencoder.pt"
-    config.paths.ae_scaler_path = config.paths.models_dir / "ae_scaler.joblib"
-    config.paths.fusion_model_path = config.paths.models_dir / "fusion.joblib"
     config.paths.metrics_path = config.paths.reports_dir / "metrics.json"
     config.paths.manifest_path = config.paths.processed_dir / "manifest.json"
 
@@ -35,28 +33,45 @@ def test_end_to_end_training(tmp_path):
     config.training.supervised.max_epochs = 1
     config.training.supervised.max_train_batches = 1
     config.training.supervised.max_val_batches = 1
-    config.training.autoencoder.max_epochs = 1
-    config.training.autoencoder.max_train_batches = 1
-    config.training.autoencoder.max_val_batches = 1
 
-    config.data.train_files = ["example_ssdp_attack.pcap", "example_normal.pcap"]
-    config.data.val_files = ["example_ssdp_attack.pcap"]
+    config.data.train_files = ["synthetic.pcap"]
+    config.data.val_files = ["synthetic.pcap"]
     config.data.test_files = []
-
-    pipeline = FeaturePipeline(config)
-    pipeline.process_files(
-        [
-            Path("pcaps/example_normal.pcap"),
-            Path("pcaps/example_ssdp_attack.pcap"),
-        ],
-        config.paths.processed_dir,
+    feature_columns = ["packet_rate", "byte_rate", "ssdp_share"]
+    frame = pd.DataFrame(
+        {
+            "pcap": ["synthetic.pcap"] * 4,
+            "window_index": list(range(4)),
+            "window_start": [float(i) for i in range(4)],
+            "window_end": [float(i + 1) for i in range(4)],
+            "attack": [0, 0, 1, 1],
+            "family": ["normal", "normal", "ssdp", "ssdp"],
+            "family_index": [0, 0, 1, 1],
+            "packet_rate": [0.1, 0.2, 5.0, 7.5],
+            "byte_rate": [100.0, 120.0, 900.0, 1100.0],
+            "ssdp_share": [0.0, 0.0, 0.8, 0.9],
+        }
+    )
+    target = config.paths.processed_dir / "synthetic.parquet"
+    frame.to_parquet(target)
+    save_json(
+        config.paths.manifest_path,
+        {
+            "feature_columns": feature_columns,
+            "frames": [
+                {
+                    "pcap": "synthetic.pcap",
+                    "rows": int(len(frame)),
+                    "packet_count": int(len(frame)),
+                    "duration": float(len(frame)),
+                }
+            ],
+        },
     )
 
     SupervisedTrainer(config).train()
-    AutoencoderTrainer(config).train()
-
     inference = InferencePipeline(config)
-    report = inference.infer(Path("pcaps/example_ssdp_attack.pcap"))
-    assert report["pcap"] == "example_ssdp_attack.pcap"
+    report = inference.infer(Path("pcaps/ssdp_flood1.pcap"))
+    assert report["pcap"] == "ssdp_flood1.pcap"
     assert report["final_decision"] in {"attack", "normal"}
     assert report["windows"]

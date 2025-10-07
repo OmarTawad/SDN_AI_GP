@@ -5,6 +5,7 @@ __pycache__/
 *ryu_env
 *reports/
 *reports_loose
+*reports_home
 reports/**
 !reports/.gitkeep
 *reports_loose

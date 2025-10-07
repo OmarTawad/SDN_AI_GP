@@ -20,7 +20,7 @@ class RobustScaler:
           * generic object with similar attributes
     """
 
-    def _init_(self, eps: float = 1e-9):
+    def __init__(self, eps: float = 1e-9):
         self.eps = float(eps)
         self.median_: Optional[np.ndarray] = None
         self.iqr_: Optional[np.ndarray] = None
@@ -65,7 +65,7 @@ class RobustScaler:
         os.makedirs(dirpath, exist_ok=True)
         payload = {
             "fmt": "dict_v1",
-            "eps": self.eps,
+            "eps": getattr(self, "eps", 1e-9),
             "median_": self.median_,
             "iqr_": self.iqr_,
             "n_features_": self.n_features_,
@@ -150,10 +150,8 @@ class RobustScaler:
         except Exception as e:
             raise TypeError(f"Unsupported scaler.pkl format: {type(payload)}") from e
 
-    # Backward-compat helper: allow RobustScaler.save(scaler, dirpath)
-    @classmethod
-    def save(cls, scaler: "RobustScaler", dirpath: str):  # type: ignore[override]
-        if isinstance(scaler, RobustScaler):
-            scaler.save(dirpath)
-        else:
-            raise TypeError("RobustScaler.save expects an instance as first argument.")
+    @staticmethod
+    def save_instance(scaler: "RobustScaler", dirpath: str) -> None:
+        if not isinstance(scaler, RobustScaler):
+            raise TypeError("Expected RobustScaler instance")
+        scaler.save(dirpath)

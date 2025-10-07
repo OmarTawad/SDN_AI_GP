@@ -1,5 +1,12 @@
 from __future__ import annotations
 import argparse, glob, json, os
+
+os.environ.setdefault("OMP_NUM_THREADS", "2")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "2")
+os.environ.setdefault("MKL_NUM_THREADS", "2")
+os.environ.setdefault("NUMEXPR_NUM_THREADS", "2")
+os.environ.setdefault("PYARROW_NUM_THREADS", "2")
+
 from typing import Dict, List
 import numpy as np
 import pandas as pd
@@ -173,12 +180,14 @@ def preprocess(cfg: dict, pcaps_glob: str, labels_csv: str):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--config", required=True)
-    ap.add_argument("--pcaps", required=True)
-    ap.add_argument("--labels", required=True)
+    ap.add_argument("--config", required=True, help="Path to config.yaml")
+    ap.add_argument("--pcaps", default=None, help="Optional glob override; defaults to config preprocess.pcaps_glob")
+    ap.add_argument("--labels", default=None, help="Optional labels.csv override; defaults to config preprocess.labels_csv")
     args = ap.parse_args()
     cfg = yaml.safe_load(open(args.config))
-    preprocess(cfg, args.pcaps, args.labels)
+    pcaps = args.pcaps or cfg["preprocess"]["pcaps_glob"]
+    labels = args.labels or cfg["preprocess"]["labels_csv"]
+    preprocess(cfg, pcaps, labels)
 
 if __name__ == "__main__":
     main()
