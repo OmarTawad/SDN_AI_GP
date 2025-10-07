@@ -10,8 +10,9 @@ Usage:
 Defaults read from your config; CLI flags can temporarily override.
 """
 from __future__ import annotations
-import argparse, os, subprocess, sys
+import argparse, json, os, subprocess, sys
 from pathlib import Path
+from collections import Counter
 
 # Ensure we import the project package even when running directly from scripts/
 ROOT = Path(__file__).resolve().parents[1]
@@ -72,6 +73,80 @@ def infer_feature_columns(frame: pd.DataFrame) -> list[str]:
     }
     return [col for col in frame.columns if col not in meta_cols]
 
+
+def load_host_maps(processed_dir: Path, stem: str) -> dict[str, dict[int, dict[str, int]]]:
+    """Load cached per-window MAC/IP counts if available."""
+
+    path = processed_dir / f"{stem}_hosts.json"
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        print(f"[warn] failed to read host metadata {path}: {exc}", file=sys.stderr)
+        return {}
+
+    def _convert(bucket: dict[str, dict[str, int]]) -> dict[int, dict[str, int]]:
+        converted: dict[int, dict[str, int]] = {}
+        for idx, counts in (bucket or {}).items():
+            try:
+                idx_int = int(idx)
+            except (TypeError, ValueError):
+                continue
+            converted[idx_int] = {str(k): int(v) for k, v in counts.items()}
+        return converted
+
+    return {
+        "macs": _convert(data.get("macs", {})),
+        "ips": _convert(data.get("ips", {})),
+    }
+
+
+def summarize_hosts(
+    host_maps: dict[str, dict[int, dict[str, int]]],
+    scores: np.ndarray,
+    tau_win: float,
+    top_n: int = 5,
+) -> dict[str, list[tuple[str, int, int]]]:
+    """Aggregate host activity and return the top contributors."""
+
+    if not scores.size or not host_maps:
+        return {}
+
+    mac_map = host_maps.get("macs", {})
+    ip_map = host_maps.get("ips", {})
+    if not mac_map and not ip_map:
+        return {}
+
+    attack_indices = {idx for idx, score in enumerate(scores) if float(score) >= tau_win}
+
+    mac_totals: Counter[str] = Counter()
+    mac_attack: Counter[str] = Counter()
+    for idx, counts in mac_map.items():
+        mac_totals.update(counts)
+        if idx in attack_indices:
+            mac_attack.update(counts)
+
+    ip_totals: Counter[str] = Counter()
+    ip_attack: Counter[str] = Counter()
+    for idx, counts in ip_map.items():
+        ip_totals.update(counts)
+        if idx in attack_indices:
+            ip_attack.update(counts)
+
+    def _top(counter_all: Counter[str], counter_attack: Counter[str]) -> list[tuple[str, int, int]]:
+        entries = [
+            (key, int(total), int(counter_attack.get(key, 0)))
+            for key, total in counter_all.items()
+        ]
+        entries.sort(key=lambda item: (item[2], item[1]), reverse=True)
+        return entries[:top_n]
+
+    return {
+        "macs": _top(mac_totals, mac_attack),
+        "ips": _top(ip_totals, ip_attack),
+    }
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("pcap", type=Path, help="PCAP or PCAPNG file")
@@ -98,7 +173,6 @@ def main():
     reports_dir.mkdir(parents=True, exist_ok=True)
 
     manifest_path = cfg.paths.manifest_path
-    import json
     manifest = json.loads(manifest_path.read_text())
     feature_cols = manifest.get("feature_columns") or []
 
@@ -190,6 +264,9 @@ def main():
             t1 = float(df.iloc[e]["window_end"])
             intervals.append((t0, t1, float(scores[s:e+1].max())))
 
+    host_maps = load_host_maps(processed_dir, args.pcap.stem)
+    host_summary = summarize_hosts(host_maps, scores, tau_win)
+
     # print result
     label = "ATTACK" if is_attack else "normal"
     extra = f", support_q={support_score:.6f}" if min_support_q > 0 else ""
@@ -203,6 +280,15 @@ def main():
         print("[ok] intervals ->", out_csv)
     else:
         print("[info] no intervals over tau_window; nothing to write.")
+
+    if host_summary.get("macs"):
+        print("\nTop MAC senders (total | attack-window packets):")
+        for mac, total, attack in host_summary["macs"]:
+            print(f"  {mac:<17} total={total:5d} attack={attack:5d}")
+    if host_summary.get("ips"):
+        print("\nTop IP senders (total | attack-window packets):")
+        for ip, total, attack in host_summary["ips"]:
+            print(f"  {ip:<15} total={total:5d} attack={attack:5d}")
 
 if __name__ == "__main__":
     main()

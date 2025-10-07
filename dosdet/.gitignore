@@ -1,0 +1,10 @@
+artifacts/
+cache/
+reports/
+*.pt
+*.parquet
+*.pkl
+*.npy
+__pycache__/
+*.pyc
+.venv/

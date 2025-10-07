@@ -19,9 +19,6 @@ class PathsConfig:
     reports_dir: Path
     scaler_path: Path
     supervised_model_path: Path
-    ae_model_path: Path
-    ae_scaler_path: Path
-    fusion_model_path: Path
     manifest_path: Path
     metrics_path: Path
 
@@ -94,22 +91,6 @@ class SupervisedTrainingConfig:
 
 
 @dataclass
-class AutoencoderTrainingConfig:
-    """Hyperparameters for the autoencoder training pipeline."""
-
-    batch_size: int
-    num_workers: int
-    max_epochs: int
-    learning_rate: float
-    weight_decay: float
-    grad_clip: float
-    early_stopping_patience: int
-    precision_mode: str
-    max_train_batches: Optional[int]
-    max_val_batches: Optional[int]
-
-
-@dataclass
 class SupervisedModelConfig:
     """Architecture parameters for the supervised detector."""
 
@@ -121,25 +102,6 @@ class SupervisedModelConfig:
     dropout: float
     attention: bool
     attention_heads: int
-
-
-@dataclass
-class AutoencoderModelConfig:
-    """Architecture parameters for the autoencoder."""
-
-    hidden_size: int
-    latent_size: int
-    num_layers: int
-    dropout: float
-
-
-@dataclass
-class FusionConfig:
-    """Score fusion configuration."""
-
-    calibrator: str
-    feature_names: Sequence[str]
-    validation_limit: Optional[int]
 
 
 @dataclass
@@ -195,7 +157,6 @@ class Config:
     data: DataConfig
     training: "TrainingConfig"
     model: "ModelConfig"
-    fusion: FusionConfig
     postprocessing: PostProcessingConfig
     explainability: ExplainabilityConfig
     live: LiveConfig
@@ -206,7 +167,6 @@ class TrainingConfig:
     """Grouped training configuration."""
 
     supervised: SupervisedTrainingConfig
-    autoencoder: AutoencoderTrainingConfig
 
 
 @dataclass
@@ -214,7 +174,6 @@ class ModelConfig:
     """Grouped model configuration."""
 
     supervised: SupervisedModelConfig
-    autoencoder: AutoencoderModelConfig
 
 
 def expand_path(base: Path, path: Path) -> Path:
@@ -235,9 +194,6 @@ def resolve_paths(config: Config, root: Optional[Path] = None) -> Config:
     config.paths.reports_dir = expand_path(base, config.paths.reports_dir)
     config.paths.scaler_path = expand_path(base, config.paths.scaler_path)
     config.paths.supervised_model_path = expand_path(base, config.paths.supervised_model_path)
-    config.paths.ae_model_path = expand_path(base, config.paths.ae_model_path)
-    config.paths.ae_scaler_path = expand_path(base, config.paths.ae_scaler_path)
-    config.paths.fusion_model_path = expand_path(base, config.paths.fusion_model_path)
     config.paths.manifest_path = expand_path(base, config.paths.manifest_path)
     config.paths.metrics_path = expand_path(base, config.paths.metrics_path)
     if config.labels.intervals_csv is not None:

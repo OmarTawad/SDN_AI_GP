@@ -37,6 +37,11 @@ deV = [
 [project.scripts]
 dos-detector = "dos_detector.cli:app"
 
+[tool.setuptools]
+package-dir = {"" = "Neural_LSTM/src"}
+packages = ["dos_detector"]
+include-package-data = true
+
 [build-system]
 requires = ["setuptools>=65", "wheel"]
 build-backend = "setuptools.build_meta"

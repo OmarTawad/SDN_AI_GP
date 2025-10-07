@@ -4,9 +4,9 @@ import yaml
 
 from .types import (
     PathsConfig, WindowingConfig, FeatureConfig, LabelsConfig, DataConfig,
-    SupervisedTrainingConfig, AutoencoderTrainingConfig, TrainingConfig,
-    SupervisedModelConfig, AutoencoderModelConfig, ModelConfig,
-    FusionConfig, PlausibilityConfig, PostProcessingConfig,
+    SupervisedTrainingConfig, TrainingConfig,
+    SupervisedModelConfig, ModelConfig,
+    PlausibilityConfig, PostProcessingConfig,
     ExplainabilityConfig, LiveConfig, Config, resolve_paths
 )
 
@@ -27,9 +27,6 @@ def load_config(path: Path) -> Config:
         reports_dir=_to_path(p["reports_dir"]),
         scaler_path=_to_path(p["scaler_path"]),
         supervised_model_path=_to_path(p["supervised_model_path"]),
-        ae_model_path=_to_path(p["ae_model_path"]),
-        ae_scaler_path=_to_path(p["ae_scaler_path"]),
-        fusion_model_path=_to_path(p["fusion_model_path"]),
         manifest_path=_to_path(p["manifest_path"]),
         metrics_path=_to_path(p["metrics_path"]),
     )
@@ -61,17 +58,12 @@ def load_config(path: Path) -> Config:
     # Training
     t = raw["training"]
     sup = SupervisedTrainingConfig(**t["supervised"])
-    ae = AutoencoderTrainingConfig(**t["autoencoder"])
-    training = TrainingConfig(supervised=sup, autoencoder=ae)
+    training = TrainingConfig(supervised=sup)
 
     # Model
     m = raw["model"]
     sm = SupervisedModelConfig(**m["supervised"])
-    am = AutoencoderModelConfig(**m["autoencoder"])
-    model = ModelConfig(supervised=sm, autoencoder=am)
-
-    # Fusion
-    fusion = FusionConfig(**raw["fusion"])
+    model = ModelConfig(supervised=sm)
 
     # Post-processing
     pp = raw["postprocessing"]
@@ -99,7 +91,6 @@ def load_config(path: Path) -> Config:
         data=data,
         training=training,
         model=model,
-        fusion=fusion,
         postprocessing=postprocessing,
         explainability=explainability,
         live=live,
