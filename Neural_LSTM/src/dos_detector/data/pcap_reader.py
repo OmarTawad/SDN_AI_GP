@@ -9,6 +9,10 @@ import shutil, subprocess
 from scapy.all import ICMP, IP, IPv6, RawPcapReader, TCP, UDP, Ether
 from ..utils.progress import progress
 from .structures import PacketRecord
+from ..features.ssdp_parser import parse_ssdp_payload
+
+SSDP_MULTICAST_V4 = "239.255.255.250"
+SSDP_MULTICAST_V6 = "ff02::c"
 
 @dataclass
 class PCAPMetadata:
@@ -50,7 +54,12 @@ def _decode_packet(data: bytes, timestamp: float) -> Optional[PacketRecord]:
     src_port = dst_port = None
     tcp_flags = None
     payload_len = 0
-    info: dict[str, Optional[str]] = {}
+    info: dict[str, Optional[str]] = {
+        "ssdp_method": "NONE",
+        "ssdp_st": None,
+        "ssdp_man": None,
+        "ssdp_user_agent": None,
+    }
 
     if ip_layer is not None:
         src_ip = getattr(ip_layer, "src", None)
@@ -68,13 +77,20 @@ def _decode_packet(data: bytes, timestamp: float) -> Optional[PacketRecord]:
             protocol = "udp"
             payload = bytes(udp.payload)
             payload_len = len(payload)
-            if payload_len:
-                try:
-                    text = payload.decode(errors="ignore")
-                    if "M-SEARCH" in text: info["ssdp_method"] = "M-SEARCH"
-                    elif "NOTIFY" in text: info["ssdp_method"] = "NOTIFY"
-                except Exception:
-                    pass
+            is_ssdp_candidate = (
+                dst_port == 1900
+                or src_port == 1900
+                or (dst_ip == SSDP_MULTICAST_V4)
+                or (dst_ip == SSDP_MULTICAST_V6)
+                or (src_ip == SSDP_MULTICAST_V4)
+                or (src_ip == SSDP_MULTICAST_V6)
+            )
+            if payload_len and is_ssdp_candidate:
+                method, tokens = parse_ssdp_payload(payload)
+                info["ssdp_method"] = method
+                info["ssdp_st"] = tokens.get("ST")
+                info["ssdp_man"] = tokens.get("MAN")
+                info["ssdp_user_agent"] = tokens.get("USER-AGENT")
         elif ip_layer.haslayer(ICMP):
             icmp = ip_layer.getlayer(ICMP)
             protocol = "icmp"

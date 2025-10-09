@@ -60,6 +60,7 @@ The `Makefile` reflects the standard flow; the commands below assume you activat
    ```
    Override CLI flags if you need to point at other pcaps or tweak decision thresholds (see `infer.py --help`).
    Besides the existing file-level verdict, each JSON report now includes the most suspicious source IP+MAC pairing plus the top 5 offenders, with companion `*_ips.csv`/`*_macs.csv` ranked exports.
+   The detector emits a single sigmoid logit (attack vs. normal); the suspicious actor ranking is derived from those window probabilities so you still get the leading MAC/IP context per file.
    To score an arbitrary capture outside `samples/`, simply point `--pcaps` at your file or glob:
    ```bash
    python3 infer.py --config config.yaml --pcaps "/data/captures/new_attack.pcap" --out custom_reports

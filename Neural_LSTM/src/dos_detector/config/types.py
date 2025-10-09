@@ -38,17 +38,8 @@ class WindowingConfig:
 class FeatureConfig:
     """Feature extraction configuration."""
 
-    rolling_window: int
-    host_history: int
-    multi_scale_bins: Sequence[int]
-    entropy_base: float
-    enable_protocol_features: bool
-    enable_change_features: bool
-    enable_host_zscores: bool
-    top_k: Sequence[int]
-    rolling_zscore_window: int
-    min_packets_threshold: int
-    eps: float
+    micro_bins: int
+    top_udp_ports: Sequence[int]
 
 
 @dataclass
@@ -82,8 +73,6 @@ class SupervisedTrainingConfig:
     weight_decay: float
     grad_clip: float
     bce_pos_weight: float
-    type_loss_weight: float
-    focal_gamma: float
     early_stopping_patience: int
     precision_mode: str
     max_train_batches: Optional[int]

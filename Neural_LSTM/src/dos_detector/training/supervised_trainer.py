@@ -46,7 +46,6 @@ class SupervisedTrainer:
         self.feature_columns: Sequence[str] = self.manifest.get("feature_columns", [])
         if not self.feature_columns:
             raise ValueError("Feature manifest is empty. Run extract-features first.")
-        self.num_types = len(config.labels.family_mapping)
 
     def _load_split(self, files: Sequence[str]) -> List[pd.DataFrame]:
         data_frames: List[pd.DataFrame] = []
@@ -83,17 +82,6 @@ class SupervisedTrainer:
             transformed.append(frame)
         return transformed
 
-    def _class_weights(self, frames: Sequence[pd.DataFrame]) -> torch.Tensor:
-        counts = np.zeros(self.num_types, dtype=float)
-        for frame in frames:
-            values = frame["family_index"].value_counts()
-            for index, count in values.items():
-                counts[int(index)] += float(count)
-        counts[counts == 0] = 1.0
-        weights = counts.sum() / counts
-        weights = weights / weights.mean()
-        return torch.tensor(weights, dtype=torch.float32, device=self.device)
-
     def train(self) -> Dict[str, float]:
         train_files = self._resolve_files("train")
         val_files = self._resolve_files("val")
@@ -124,7 +112,7 @@ class SupervisedTrainer:
 
         model = SequenceClassifier(
             input_size=len(self.feature_columns),
-            num_attack_types=self.num_types,
+            num_attack_types=len(self.config.labels.family_mapping),
             config=self.config.model.supervised,
         ).to(self.device)
         optimizer = optim.AdamW(
@@ -137,7 +125,6 @@ class SupervisedTrainer:
             dtype=torch.float32,
             device=self.device,
         )
-        class_weights = self._class_weights(train_frames)
 
         best_auc = -float("inf")
         best_state: Dict[str, torch.Tensor] | None = None
@@ -146,7 +133,7 @@ class SupervisedTrainer:
         history: List[Dict[str, float]] = []
 
         for epoch in progress(range(1, self.config.training.supervised.max_epochs + 1), desc="Supervised epochs", unit="ep"):
-            train_loss = self._train_epoch(model, train_loader, optimizer, pos_weight, class_weights)
+            train_loss = self._train_epoch(model, train_loader, optimizer, pos_weight)
             metrics = self._evaluate(model, val_loader)
             history.append({"epoch": epoch, "train_loss": train_loss, **metrics})
             self.logger.info(
@@ -178,7 +165,6 @@ class SupervisedTrainer:
         loader: DataLoader,
         optimizer: optim.Optimizer,
         pos_weight: torch.Tensor,
-        class_weights: torch.Tensor,
     ) -> float:
         model.train()
         total_loss = 0.0
@@ -188,33 +174,16 @@ class SupervisedTrainer:
                 break
             features = batch["features"].to(self.device)
             binary_labels = batch["binary_labels"].to(self.device)
-            family_labels = batch["family_labels"].to(self.device)
             optimizer.zero_grad(set_to_none=True)
             outputs = model(features)
             binary_loss = F.binary_cross_entropy_with_logits(outputs.window_logits, binary_labels, pos_weight=pos_weight)
-            type_loss = self._type_loss(outputs.type_logits, family_labels, class_weights)
-            loss = binary_loss + self.config.training.supervised.type_loss_weight * type_loss
+            loss = binary_loss
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), self.config.training.supervised.grad_clip)
             optimizer.step()
             total_loss += float(loss.detach().cpu())
         batches = max(1, min(len(loader), (max_batches or len(loader))))
         return total_loss / batches
-
-    def _type_loss(
-        self,
-        logits: torch.Tensor,
-        labels: torch.Tensor,
-        class_weights: torch.Tensor,
-    ) -> torch.Tensor:
-        flat_logits = logits.view(-1, self.num_types)
-        flat_labels = labels.view(-1)
-        ce = F.cross_entropy(flat_logits, flat_labels, weight=class_weights, reduction="none")
-        gamma = self.config.training.supervised.focal_gamma
-        if gamma > 0:
-            pt = torch.exp(-ce)
-            ce = ((1 - pt) ** gamma) * ce
-        return ce.mean()
 
     def _evaluate(self, model: SequenceClassifier, loader: DataLoader) -> Dict[str, float]:
         model.eval()

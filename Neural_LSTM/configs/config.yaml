@@ -9,26 +9,19 @@ paths:
   manifest_path: ../data/processed/feature_manifest.json
   metrics_path: ../reports/metrics_summary.json
 windowing:
-  window_size: 0.2
-  hop_size: 0.1
+  window_size: 1.0
+  hop_size: 0.5
   sequence_length: 30
   sequence_stride: 30
   max_windows: 50000
 feature:
-  rolling_window: 3
-  host_history: 10
-  multi_scale_bins:
-  - 2
-  - 4
-  entropy_base: 2
-  enable_protocol_features: true
-  enable_change_features: true
-  enable_host_zscores: true
-  top_k:
-  - 1
-  rolling_zscore_window: 10
-  min_packets_threshold: 3
-  eps: 1.0e-06
+  micro_bins: 8
+  top_udp_ports:
+  - 1900
+  - 53
+  - 123
+  - 80
+  - 443
 labels:
   intervals_csv: ../data/attack_intervals.csv
   default_family: normal
@@ -62,8 +55,6 @@ training:
     weight_decay: 0.01
     grad_clip: 1.0
     bce_pos_weight: 3.0
-    type_loss_weight: 0.4
-    focal_gamma: 2.0
     early_stopping_patience: 6
     precision_mode: autocast
     max_train_batches: null

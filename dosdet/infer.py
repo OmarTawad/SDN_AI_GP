@@ -66,9 +66,6 @@ def _load_artifacts(save_dir: str, cfg: dict):
     kernel_size = int(meta.get("kernel_size", cfg["training"]["kernel_size"]))
     dropout = float(meta.get("dropout", cfg["training"]["dropout"]))
     mlp_hidden = tuple(meta.get("mlp_hidden", cfg["training"]["mlp_hidden"]))
-    aux_family_head = bool(meta.get("aux_family_head", cfg["training"].get("aux_family_head", False)))
-    n_families = int(meta.get("n_families", 6))
-
     model = FastDetector(
         seq_in_dim=seq_in_dim,
         static_dim=static_dim,
@@ -76,8 +73,6 @@ def _load_artifacts(save_dir: str, cfg: dict):
         k=kernel_size,
         drop=dropout,
         mlp_hidden=mlp_hidden,
-        aux_family_head=aux_family_head,
-        n_families=n_families,
     )
     state = torch.load(os.path.join(save_dir, "model_best.pt"), map_location="cpu")
     model.load_state_dict(state["model"])
