@@ -49,8 +49,6 @@ def _load_artifacts(cfg: dict) -> Tuple[FastDetector, RobustScaler, StaticSlimme
         k=int(meta.get("kernel_size", trn["kernel_size"])),
         drop=float(meta.get("dropout", trn["dropout"])),
         mlp_hidden=tuple(meta.get("mlp_hidden", trn["mlp_hidden"])),
-        aux_family_head=bool(meta.get("aux_family_head", trn.get("aux_family_head", False))),
-        n_families=int(meta.get("n_families", 6)),
     )
     state = torch.load(os.path.join(artifacts_dir, "model_best.pt"), map_location="cpu")
     model.load_state_dict(state["model"])

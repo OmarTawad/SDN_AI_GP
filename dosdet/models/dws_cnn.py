@@ -58,7 +58,7 @@ class FastSeqEncoder(nn.Module):
         return pooled, w
 
 class FastDetector(nn.Module):
-    def __init__(self, seq_in_dim: int, static_dim: int, channels=(64,96), k=5, drop=0.1, mlp_hidden=(256,64), aux_family_head=True, n_families=6):
+    def __init__(self, seq_in_dim: int, static_dim: int, channels=(64,96), k=5, drop=0.1, mlp_hidden=(256,64)):
         super().__init__()
         self.seq = FastSeqEncoder(seq_in_dim, channels=channels, k=k, drop=drop)
         in_total = self.seq.out_dim + static_dim
@@ -69,15 +69,9 @@ class FastDetector(nn.Module):
             c = h
         self.mlp = nn.Sequential(*mlp)
         self.bin_head = nn.Linear(c, 1)
-        self.aux_family_head = aux_family_head
-        if aux_family_head:
-            self.family_head = nn.Linear(c, n_families)
 
     def forward(self, seq, static):
         pooled, attn = self.seq(seq)
         h = torch.cat([pooled, static], dim=-1)
         h = self.mlp(h)
-        out = {"logits": self.bin_head(h), "attn": attn}
-        if self.aux_family_head:
-            out["family_logits"] = self.family_head(h)
-        return out
+        return {"logits": self.bin_head(h), "attn": attn}

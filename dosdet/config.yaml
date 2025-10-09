@@ -38,7 +38,6 @@ training:
   kernel_size: 5
   dropout: 0.1
   mlp_hidden: [256, 64]
-  aux_family_head: true
   lr: 0.002
   weight_decay: 0.001
   early_stop_patience: 4

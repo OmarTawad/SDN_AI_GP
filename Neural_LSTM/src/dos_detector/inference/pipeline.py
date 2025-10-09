@@ -11,7 +11,6 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 import pandas as pd
 import torch
-import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 from ..config import Config
@@ -39,7 +38,6 @@ class InferencePipeline:
         if not self.feature_columns:
             raise ValueError("Feature manifest missing. Run extract-features first.")
         self.family_mapping = config.labels.family_mapping
-        self.index_to_family = {index: name for name, index in self.family_mapping.items()}
         self.supervised_model = self._load_supervised_model()
         self.scaler = load_joblib(config.paths.scaler_path)
         self.gate = DecisionGate(config.postprocessing)
@@ -103,7 +101,7 @@ class InferencePipeline:
             for entry in window_results
         ]
         decisions, file_attack = self.gate.apply(gate_input)
-        final_family = self._dominant_family(decisions)
+        final_family = "attack" if file_attack else "normal"
         explanation = {}
         if window_results:
             top_window = max(window_results, key=lambda item: item["fused_score"])
@@ -157,7 +155,6 @@ class InferencePipeline:
                 features = batch["features"].to(self.device)
                 outputs = self.supervised_model(features)
                 probs = torch.sigmoid(outputs.window_logits).cpu().numpy()
-                type_logits = F.softmax(outputs.type_logits, dim=-1).cpu().numpy()
                 for i, meta in enumerate(batch["metadata"]):
                     start_index = meta["start_index"]
                     end_index = meta["end_index"]
@@ -166,14 +163,12 @@ class InferencePipeline:
                             window_index,
                             {
                                 "supervised": [],
-                                "type_probs": [],
                                 "features": raw_frame[self.feature_columns].iloc[window_index].to_dict(),
                                 "start": float(raw_frame["window_start"].iloc[window_index]),
                                 "end": float(raw_frame["window_end"].iloc[window_index]),
                             },
                         )
                         info["supervised"].append(float(probs[i, offset]))
-                        info["type_probs"].append(type_logits[i, offset])
         return window_store
 
     def _assemble_results(self, raw_frame: pd.DataFrame, window_store: Dict[int, Dict[str, object]]) -> List[Dict[str, object]]:
@@ -181,12 +176,7 @@ class InferencePipeline:
         for index in sorted(window_store.keys()):
             info = window_store[index]
             supervised_prob = float(np.mean(info.get("supervised", [0.0])))
-            type_probs = np.mean(np.array(info.get("type_probs", [[0.0] * len(self.family_mapping)])), axis=0)
-            if np.isnan(type_probs).any():
-                type_probs = np.zeros(len(self.family_mapping))
-                type_probs[0] = 1.0
-            family_index = int(np.argmax(type_probs)) if type_probs.size else 0
-            family_name = self.index_to_family.get(family_index, "normal")
+            family_name = "attack" if supervised_prob >= self.config.postprocessing.tau_window else "normal"
             ae_error = 0.0
             ae_anomaly = 0.0
             fused = supervised_prob
@@ -205,15 +195,6 @@ class InferencePipeline:
             )
         return results
 
-    def _dominant_family(self, decisions: Sequence) -> str:
-        counts = defaultdict(int)
-        for decision in decisions:
-            if decision.is_attack:
-                counts[decision.family] += 1
-        if not counts:
-            return "normal"
-        return max(counts.items(), key=lambda item: item[1])[0]
-
     def _explain_sequence(self, dataset: SequenceDataset, window_index: int) -> Dict[str, object]:
         top_k = self.config.explainability.top_features
         for sample in dataset.samples:
@@ -226,7 +207,7 @@ class InferencePipeline:
                 tensor.requires_grad_(True)
                 self.supervised_model.zero_grad(set_to_none=True)
                 outputs = self.supervised_model(tensor)
-                score = torch.sigmoid(outputs.file_logits)
+                score = outputs.sequence_prob
                 score.backward()
                 gradients = tensor.grad.abs().squeeze(0)
                 feature_scores = gradients.mean(dim=0).cpu().numpy()

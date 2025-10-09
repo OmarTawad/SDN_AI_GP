@@ -219,6 +219,7 @@ def collate(batch):
     seq = torch.stack([b[0] for b in batch], dim=0)
     static = torch.stack([b[1] for b in batch], dim=0)
     y = torch.stack([b[2] for b in batch], dim=0)
+    # Family labels are still emitted by cached shards for backwards compatibility.
     fam = torch.stack([b[3] for b in batch], dim=0).squeeze(1)
     ts = torch.stack([b[4] for b in batch], dim=0)
     names = [b[5] for b in batch]
@@ -268,8 +269,6 @@ def main() -> None:
         k=tr_cfg["kernel_size"],
         drop=tr_cfg["dropout"],
         mlp_hidden=tuple(tr_cfg["mlp_hidden"]),
-        aux_family_head=bool(tr_cfg.get("aux_family_head", False)),
-        n_families=6,
     )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
@@ -277,7 +276,6 @@ def main() -> None:
     criterion = nn.BCEWithLogitsLoss(
         pos_weight=torch.tensor([tr_cfg["class_weight_pos"]], device=device)
     )
-    aux_ce = nn.CrossEntropyLoss(ignore_index=-1)
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=tr_cfg["lr"], weight_decay=tr_cfg["weight_decay"]
     )
@@ -320,7 +318,7 @@ def main() -> None:
             tqdm(train_loader, desc=f"Epoch {epoch:02d}", unit="batch"),
             start=1,
         ):
-            seq, static, y, fam, ts, names = batch
+            seq, static, y, _, ts, names = batch
             stat_np = static.cpu().numpy()
             stat_scaled = scaler.transform(stat_np, feature_names)
             stat_slim = slimmer.transform(stat_scaled)
@@ -328,14 +326,11 @@ def main() -> None:
 
             seq = seq.to(device, non_blocking=True)
             y = y.to(device)
-            fam = fam.to(device)
 
             cast_ctx = torch.amp.autocast("cuda") if amp_enabled else nullcontext()
             with cast_ctx:
                 out = model(seq, static_t)
                 loss = criterion(out["logits"], y)
-                if tr_cfg.get("aux_family_head", False) and "family_logits" in out:
-                    loss = loss + 0.2 * aux_ce(out["family_logits"], fam)
 
             scaler_amp.scale(loss / accum_steps).backward()
             if step % accum_steps == 0 or step == len(train_loader):
@@ -351,7 +346,7 @@ def main() -> None:
         val_logits, val_targets = [], []
         with torch.no_grad():
             for batch in tqdm(val_thin_loader, desc="Thin-val", unit="batch", leave=False):
-                seq, static, y, fam, ts, names = batch
+                seq, static, y, _, ts, names = batch
                 stat_np = static.cpu().numpy()
                 stat_scaled = scaler.transform(stat_np, feature_names)
                 stat_slim = slimmer.transform(stat_scaled)
@@ -414,7 +409,7 @@ def main() -> None:
     full_logits, full_targets = [], []
     with torch.no_grad():
         for batch in tqdm(val_full_loader, desc="Full-val (calibration)", unit="batch"):
-            seq, static, y, fam, ts, names = batch
+            seq, static, y, _, ts, names = batch
             stat_np = static.cpu().numpy()
             stat_scaled = scaler.transform(stat_np, feature_names)
             stat_slim = slimmer.transform(stat_scaled)
@@ -453,8 +448,6 @@ def main() -> None:
         "kernel_size": tr_cfg["kernel_size"],
         "dropout": tr_cfg["dropout"],
         "mlp_hidden": list(tr_cfg["mlp_hidden"]),
-        "aux_family_head": bool(tr_cfg.get("aux_family_head", False)),
-        "n_families": 6,
     }
     with open(os.path.join(artifacts_dir, "feature_model_meta.json"), "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=2)

@@ -66,20 +66,22 @@ class DecisionGate:
         if not isinstance(features, dict):
             return False
         if family == "ssdp":
-            share = float(features.get("ssdp_share", 0.0))
+            share = float(features.get("ssdp_share", features.get("udp_1900_fraction", 0.0)))
             udp_rate = float(features.get("udp_1900_rate", 0.0))
+            if udp_rate <= 0.0:
+                udp_rate = float(features.get("udp_per_s", 0.0))
             return share >= self.config.plausibility.ssdp_udp_1900_min_fraction or udp_rate > 0
         if family == "syn":
-            syn_rate = float(features.get("tcp_syn_rate", 0.0))
+            syn_rate = float(features.get("tcp_syn_rate", features.get("tcp_per_s", 0.0)))
             return syn_rate >= self.config.plausibility.syn_min_syn_rate
         if family == "icmp":
-            icmp_rate = float(features.get("icmp_echo_rate", 0.0))
+            icmp_rate = float(features.get("icmp_echo_rate", features.get("icmp_per_s", 0.0)))
             return icmp_rate >= self.config.plausibility.icmp_min_rate
         if family == "udp":
-            udp_rate = float(features.get("packet_rate", 0.0))
+            udp_rate = float(features.get("packet_rate", features.get("pkts_per_s", 0.0)))
             return udp_rate >= self.config.plausibility.udp_min_rate
         if family == "http":
-            byte_rate = float(features.get("byte_rate", 0.0))
+            byte_rate = float(features.get("byte_rate", features.get("bytes_per_s", 0.0)))
             return byte_rate >= self.config.plausibility.http_min_rate
         return True
 
