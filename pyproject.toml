@@ -1,9 +1,9 @@
 [project]
-name = "dos-detector"
+name = "arp-detector"
 version = "0.1.0"
-description = "PCAP-based DoS detector using sequence models"
+description = "PCAP-based ARP spoofing detector using sequence models"
 authors = [
-    { name = "SDN AI GP", email = "maintainer@example.com" }
+    { name = "Omar Awad", email = "Omar.t.awad@gmail.com" }
 ]
 requires-python = ">=3.10"
 dependencies = [
@@ -35,11 +35,11 @@ deV = [
 ]
 
 [project.scripts]
-dos-detector = "dos_detector.cli:app"
+arp-detector = "arp_detector.cli:app"
 
 [tool.setuptools]
-package-dir = {"" = "Neural_LSTM/src"}
-packages = ["dos_detector"]
+package-dir = {"" = "ARP_LSTM/src"}
+packages = ["arp_detector"]
 include-package-data = true
 
 [build-system]
