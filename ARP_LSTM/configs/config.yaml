@@ -1,0 +1,65 @@
+seed: 42
+paths:
+  raw_pcap_dir: ../pcaps
+  processed_dir: ../data/processed
+  models_dir: ../models
+  reports_dir: ../reports
+  scaler_path: ../models/feature_scaler.joblib
+  supervised_model_path: ../models/supervised.pt
+  manifest_path: ../data/processed/feature_manifest.json
+  metrics_path: ../reports/metrics_summary.json
+windowing:
+  window_size: 1.0
+  hop_size: 0.5
+  sequence_length: 30
+  sequence_stride: 30
+  max_windows: 50000
+feature: {}
+labels:
+  intervals_csv: ../data/arp_attack_intervals.csv
+  default_family: normal
+  family_mapping:
+    normal: 0
+    arp_spoof: 1
+  attack_families:
+  - arp_spoof
+data:
+  train_files: []
+  val_files: []
+  test_files: []
+  normal_families:
+  - normal
+training:
+  supervised:
+    batch_size: 8
+    num_workers: 2
+    max_epochs: 50
+    learning_rate: 0.0005
+    weight_decay: 0.01
+    grad_clip: 1.0
+    bce_pos_weight: 3.0
+    early_stopping_patience: 6
+    precision_mode: autocast
+    max_train_batches: null
+    max_val_batches: null
+model:
+  supervised:
+    input_dropout: 0.1
+    rnn_type: lstm
+    hidden_size: 128
+    num_layers: 2
+    bidirectional: true
+    dropout: 0.2
+    attention: true
+    attention_heads: 4
+postprocessing:
+  tau_window: 0.65
+  tau_file: 0.75
+  min_attack_windows: 2
+explainability:
+  shap_background_size: 64
+  top_features: 15
+  attention: true
+live:
+  interface: any
+  flush_seconds: 1.0
