@@ -1,0 +1,15 @@
+{
+  "seq_in_dim": 12,
+  "static_dim": 31,
+  "micro_bins": 8,
+  "channels": [
+    64,
+    96
+  ],
+  "kernel_size": 5,
+  "dropout": 0.1,
+  "mlp_hidden": [
+    256,
+    64
+  ]
+}

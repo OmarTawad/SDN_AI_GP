@@ -1,0 +1,40 @@
+{
+  "file": "pure_attack.pcap",
+  "binary_head": 1,
+  "decision": "attack",
+  "num_attack_windows": 14,
+  "max_probability": 0.962443,
+  "gate_reasons": [
+    "mac_conflict"
+  ],
+  "first_attack_window_ts": "2014-01-06T22:56:28.516165Z",
+  "mac_conflict_detected": true,
+  "suspicious_mac": {
+    "mac": "00:0c:29:1d:b3:b1",
+    "distinct_ips": 4,
+    "total_replies": 84,
+    "windows": 14,
+    "conflict_windows": 14,
+    "max_prob": 0.441041,
+    "score": 10009.480769,
+    "claimed_ips": [
+      {
+        "ip": "192.168.47.2",
+        "replies": 42
+      },
+      {
+        "ip": "192.168.47.1",
+        "replies": 14
+      },
+      {
+        "ip": "192.168.47.200",
+        "replies": 14
+      },
+      {
+        "ip": "192.168.47.254",
+        "replies": 14
+      }
+    ],
+    "first_conflict_ts": "2014-01-06T22:56:28.516165Z"
+  }
+}
