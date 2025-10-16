@@ -1,0 +1,60 @@
+seed: 1337
+
+paths:
+  cache_dir: cache
+  artifacts_dir: artifacts
+  reports_dir: reports
+
+windowing:
+  window_sec: 1.0
+  stride_sec: 0.5
+  micro_bins: 8
+
+features:
+  static_max_dim: 128
+  pca_whiten: false
+
+split:
+  train_val_test: [0.7, 0.15, 0.15]
+  thin_val_fraction: 0.5
+
+sampling:
+  normal_subsample_rate: 0.2
+  hard_negative_mining:
+    enabled: true
+    refresh_every_epochs: 2
+    top_k_per_file: 50
+
+training:
+  epochs: 10
+  batch_size: 128           # tuned for 2 vCPU / low-memory boxes
+  grad_accum_steps: 1
+  channels: [64, 96]
+  kernel_size: 5
+  dropout: 0.1
+  mlp_hidden: [256, 64]
+  lr: 0.002
+  weight_decay: 0.001
+  early_stop_patience: 4
+  class_weight_pos: 3.0
+  cosine_lr: true
+  amp: false               # AMP disabled by default on CPU-only nodes
+  dataloader_workers: 0    # single-process loading keeps 2 vCPU machines stable
+  pinned_memory: false
+  cudnn_benchmark: true
+  grad_clip: 0.0
+
+decision:
+  tau_high: 0.7
+  tau_low: 0.55
+  min_attack_windows: 2
+  consecutive_required: 1
+  cooldown_windows: 1
+  enable_gate: true
+  min_arp_replies: 2.0
+  min_conflict_macs: 1
+
+preprocess:
+  shard_max_mb: 64
+  pcaps_glob: "samples/*.pcap"
+  labels_csv: "labels/labels.csv"
