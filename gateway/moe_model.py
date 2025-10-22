@@ -675,11 +675,13 @@ __all__ = [
     "ExpertSpec",
     "FrozenExpert",
     "GatingNetwork",
+    "load_frozen_expert",
     "TaskMoESpec",
     "TaskMoE",
     "MultiTaskMoE",
     "build_task_moe",
     "build_multitask_moe",
+    "AUTO_FEATURE_DIM",
     "AUTOENCODER_SPEC",
     "DOS_CNN_SPEC",
     "DOS_LSTM_SPEC",
@@ -690,6 +692,12 @@ __all__ = [
     "DEFAULT_TASK_SPECS",
     "DOS_GATING_DIM",
     "ARP_GATING_DIM",
+    "DOS_CNN_STATIC_DIM",
+    "DOS_SEQ_FEATURE_DIM",
+    "DOS_LSTM_FEATURE_DIM",
+    "ARP_CNN_STATIC_DIM",
+    "ARP_SEQ_FEATURE_DIM",
+    "ARP_LSTM_FEATURE_DIM",
 ]
 
 

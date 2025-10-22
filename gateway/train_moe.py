@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import math
 import os
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -25,11 +25,12 @@ from gateway.data_pipeline import (
     CACHE_ROOT,
     CachedMoEDataset,
     MoEDataset,
+    class_id_to_name,
     discover_pcaps,
     load_cache_entries,
     tasks_slug,
 )
-from gateway.moe_model import DEFAULT_TASK_SPECS, build_multitask_moe
+from gateway.unified_moe_model import UNIFIED_GATING_INPUT_DIM, UnifiedMoE, build_unified_moe
 
 
 # ---------------------------------------------------------------------------
@@ -51,16 +52,10 @@ def parse_args() -> argparse.Namespace:
         help="Torch CPU thread pool size (default: min(2, available cores)).",
     )
     parser.add_argument(
-        "--tasks",
-        type=str,
-        default="dos,arp",
-        help="Comma-separated list of tasks to train (choices: dos, arp).",
-    )
-    parser.add_argument(
         "--gating-hidden",
         type=int,
-        default=None,
-        help="Hidden width for each gating MLP (defaults to spec value).",
+        default=128,
+        help="Hidden width for the unified gating MLP (default: 128).",
     )
     parser.add_argument(
         "--max-windows-per-file",
@@ -123,6 +118,12 @@ def parse_args() -> argparse.Namespace:
         default="auto",
         help="Use cached tensors (auto tries cache, on requires cache, off disables it).",
     )
+    parser.add_argument(
+        "--auto-recon-weight",
+        type=float,
+        default=0.0,
+        help="Optional weight for negative autoencoder scores as auxiliary loss.",
+    )
     return parser.parse_args()
 
 
@@ -133,8 +134,8 @@ class TrainingConfig:
     learning_rate: float
     seed: int
     num_threads: int
-    tasks: List[str]
-    gating_hidden: Optional[int]
+    gating_hidden: int
+    auto_recon_weight: float
     max_windows_per_file: Optional[int]
     max_total_windows: Optional[int]
     max_batches: Optional[int]
@@ -145,18 +146,18 @@ class TrainingConfig:
     max_packets_per_window: Optional[int]
     cache_dir: Optional[Path]
     use_cache: str
+    tasks: Tuple[str, ...] = ("dos", "arp")
 
     @classmethod
     def from_args(cls, args: argparse.Namespace) -> "TrainingConfig":
-        tasks = [task.strip().lower() for task in args.tasks.split(",") if task.strip()]
         return cls(
             epochs=args.epochs,
             batch_size=args.batch_size,
             learning_rate=args.learning_rate,
             seed=args.seed,
             num_threads=max(1, args.num_threads),
-            tasks=tasks,
-            gating_hidden=args.gating_hidden,
+            gating_hidden=max(1, args.gating_hidden),
+            auto_recon_weight=max(0.0, float(args.auto_recon_weight)),
             max_windows_per_file=args.max_windows_per_file if args.max_windows_per_file > 0 else None,
             max_total_windows=args.max_total_windows if args.max_total_windows > 0 else None,
             max_batches=args.max_batches,
@@ -167,6 +168,7 @@ class TrainingConfig:
             max_packets_per_window=args.max_packets_per_window if args.max_packets_per_window and args.max_packets_per_window > 0 else None,
             cache_dir=Path(args.cache_dir).resolve() if args.cache_dir else None,
             use_cache=args.use_cache,
+            tasks=("dos", "arp"),
         )
 
     @property
@@ -183,22 +185,10 @@ class TrainingConfig:
 # ---------------------------------------------------------------------------
 # Dataset orchestration
 # ---------------------------------------------------------------------------
-
-
-def _ensure_tasks(tasks: Sequence[str]) -> List[str]:
-    if not tasks:
-        raise ValueError("No tasks specified. Choose from 'dos' and 'arp'.")
-    valid_tasks = {"dos", "arp"}
-    for task in tasks:
-        if task not in valid_tasks:
-            raise ValueError(f"Unsupported task '{task}'. Valid options: dos, arp.")
-    return list(tasks)
-
-
 def build_dataset(
     config: TrainingConfig,
     files: Sequence,
-) -> Tuple[IterableDataset[Tuple[Dict[str, Tensor], Dict[str, Tensor]]], bool]:
+) -> Tuple[IterableDataset[Tuple[Dict[str, Tensor], Tensor]], bool]:
     entries, missing, mismatched = load_cache_entries(config.cache_base, files, config.tasks)
     slug = tasks_slug(config.tasks)
     cache_dir = config.cache_base / slug
@@ -208,12 +198,25 @@ def build_dataset(
         payloads: List[Dict[str, object]] = []
         for entry in entries:
             data = entry["data"]
-            features = {key: tensor.detach().to(torch.float32) for key, tensor in data.get("features", {}).items()}
-            labels = {key: tensor.detach().to(torch.float32) for key, tensor in data.get("labels", {}).items()}
+            features = {
+                key: tensor.detach().to(torch.float32)
+                for key, tensor in data.get("features", {}).items()
+            }
+            payload: Dict[str, object] = {"features": features}
+            targets = data.get("targets")
+            if targets is not None:
+                payload["targets"] = torch.as_tensor(targets).to(torch.long)
+            labels = data.get("labels")
+            if isinstance(labels, dict):
+                payload["labels"] = {
+                    key: torch.as_tensor(value).to(torch.float32)
+                    for key, value in labels.items()
+                }
             meta = dict(data.get("meta", {}))
             meta.setdefault("source_path", str(entry["path"]))
             meta.setdefault("cache_path", str(entry["cache_path"]))
-            payloads.append({"features": features, "labels": labels, "meta": meta})
+            payload["meta"] = meta
+            payloads.append(payload)
         dataset = CachedMoEDataset(
             cache_entries=payloads,
             tasks=config.tasks,
@@ -320,16 +323,19 @@ def train_epoch(
     num_epochs: int,
     dataloader: Iterable,
     dataset: IterableDataset,
-    model,
-    optimizer,
-    criterion,
+    model: UnifiedMoE,
+    optimizer: torch.optim.Optimizer,
+    criterion: nn.Module,
     effective_max_batches: Optional[int],
-    selected_tasks: Sequence[str],
-) -> Tuple[float, int, bool]:
+    auto_recon_weight: float,
+) -> Tuple[float, float, int, bool]:
     epoch_loss = 0.0
+    epoch_correct = 0
+    total_samples = 0
     batch_count = 0
     printed_shapes = False
     stop_training = False
+    wants_attention = auto_recon_weight > 0.0
     progress_total = effective_max_batches
     progress = tqdm(
         dataloader,
@@ -340,35 +346,56 @@ def train_epoch(
     set_dataset_logger(dataset, progress.write)
 
     try:
-        for batch_idx, (features, labels) in enumerate(progress, start=1):
+        for batch_idx, (features, targets) in enumerate(progress, start=1):
             if not printed_shapes:
-                shape_bits = [f"auto={tuple(features['auto'].shape)}"]
-                if "dos" in selected_tasks and "dos_gating" in features:
-                    shape_bits.append(f"dos_gating={tuple(features['dos_gating'].shape)}")
-                if "arp" in selected_tasks and "arp_gating" in features:
-                    shape_bits.append(f"arp_gating={tuple(features['arp_gating'].shape)}")
-                progress.write("[Shapes] " + " ".join(shape_bits))
+                shape_bits: List[str] = []
+                for key in ("gating_input", "auto", "dos_cnn_seq", "dos_lstm_seq", "arp_cnn_seq", "arp_lstm_seq"):
+                    tensor = features.get(key)
+                    if isinstance(tensor, Tensor):
+                        shape_bits.append(f"{key}={tuple(tensor.shape)}")
+                if shape_bits:
+                    progress.write("[Shapes] " + " ".join(shape_bits))
                 printed_shapes = True
 
             optimizer.zero_grad()
-            outputs = model(features)
-            losses = []
-            for task_name, logits in outputs.items():
-                target = labels.get(task_name)
-                if target is None:
-                    continue
-                losses.append(criterion(logits, target))
-            if not losses:
-                continue
-            loss = sum(losses) / len(losses)
+            if wants_attention:
+                logits, attention = model(features, return_attention=True)
+            else:
+                logits = model(features)
+                attention = None
+
+            targets = targets.to(logits.device)
+            loss = criterion(logits, targets)
+            aux_value = 0.0
+            if wants_attention and attention is not None:
+                auto_scores = attention["expert_outputs"][:, 0]
+                recon_loss = -auto_scores.mean()
+                loss = loss + auto_recon_weight * recon_loss
+                aux_value = float(recon_loss.item())
+
             loss.backward()
             optimizer.step()
 
             loss_value = float(loss.item())
             epoch_loss += loss_value
+            preds = logits.argmax(dim=1)
+            batch_correct = int((preds == targets).sum().item())
+            epoch_correct += batch_correct
+            sample_count = targets.size(0)
+            total_samples += sample_count
             batch_count += 1
-            progress.set_postfix(loss=f"{loss_value:.4f}")
-            progress.write(f"Epoch {epoch_index + 1} Batch {batch_idx}: loss={loss_value:.4f}")
+            accuracy = batch_correct / max(1, sample_count)
+            postfix = {"loss": f"{loss_value:.4f}", "acc": f"{accuracy * 100:.1f}%"}
+            if wants_attention:
+                postfix["aux"] = f"{aux_value:.4f}"
+            progress.set_postfix(**postfix)
+            log_line = (
+                f"Epoch {epoch_index + 1} Batch {batch_idx}: "
+                f"loss={loss_value:.4f} acc={accuracy * 100:.1f}%"
+            )
+            if wants_attention:
+                log_line += f" aux_recon={aux_value:.4f}"
+            progress.write(log_line)
             if effective_max_batches is not None and batch_count >= effective_max_batches:
                 progress.write(f"Reached max_batches={effective_max_batches}; stopping early.")
                 stop_training = True
@@ -377,37 +404,38 @@ def train_epoch(
         set_dataset_logger(dataset, None)
         progress.close()
 
-    return epoch_loss, batch_count, stop_training
+    avg_accuracy = epoch_correct / max(1, total_samples)
+    return epoch_loss, avg_accuracy, batch_count, stop_training
 
 
-def summarise(dataset: IterableDataset, selected_tasks: Sequence[str]) -> None:
+def summarise(dataset: IterableDataset) -> None:
     print("\nPCAP summary:")
-    label_totals: Dict[str, Dict[str, int]] = {task: {} for task in selected_tasks}
-
     stats = getattr(dataset, "stats", {})
     skipped = getattr(dataset, "skipped", {})
+    if not stats:
+        print(" (no statistics available)")
+        return
 
+    label_totals: Dict[int, int] = {}
     for path, info in stats.items():
         skip_reason = info.get("skipped_reason") or skipped.get(path)
         if skip_reason:
             print(f" - {path}: skipped ({skip_reason})")
             continue
-        labels = info.get("labels", {})
+        label_id = int(info.get("label", 0))
+        label_name = info.get("label_name", class_id_to_name(label_id))
         windows = int(info.get("windows", 0))
         batches = int(info.get("batches", 0))
-        label_desc = ", ".join(
-            f"{task}={'attack' if labels.get(task, 0) else 'normal'}" for task in selected_tasks
-        )
-        print(f" - {path}: labels={label_desc}, windows={windows}, batches={batches}")
-        for task in selected_tasks:
-            totals = label_totals.setdefault(task, {})
-            label_name = "attack" if labels.get(task, 0) else "normal"
-            totals[label_name] = totals.get(label_name, 0) + windows
+        truncated = int(info.get("truncated_windows", 0))
+        line = f" - {path}: label={label_name}, windows={windows}, batches={batches}"
+        if truncated:
+            line += f", truncated={truncated}"
+        print(line)
+        label_totals[label_id] = label_totals.get(label_id, 0) + windows
 
-    print("\nWindow counts by task:")
-    for task, counts in label_totals.items():
-        for label_name, count in counts.items():
-            print(f" * {task} {label_name}: {count} windows")
+    print("\nWindow counts by class:")
+    for label_id, count in sorted(label_totals.items()):
+        print(f" * {class_id_to_name(label_id)}: {count} windows")
 
 
 # ---------------------------------------------------------------------------
@@ -417,21 +445,15 @@ def summarise(dataset: IterableDataset, selected_tasks: Sequence[str]) -> None:
 
 def run_training(config: TrainingConfig) -> None:
     torch.set_num_threads(max(1, config.num_threads))
-    selected_tasks = _ensure_tasks(config.tasks)
+    torch.manual_seed(config.seed)
 
-    task_specs_map = {spec.name: spec for spec in DEFAULT_TASK_SPECS}
-    selected_specs = []
-    for task in selected_tasks:
-        spec = task_specs_map[task]
-        if config.gating_hidden is not None:
-            spec = replace(spec, gating_hidden_dim=config.gating_hidden)
-        selected_specs.append(spec)
-
-    files = discover_pcaps(selected_tasks)
-    if not files:
-        raise RuntimeError("No eligible PCAP files found in 'samples/'. Populate the directory with .pcap files.")
-
+    files = discover_pcaps()
     dataset, used_cache = build_dataset(config, files)
+    if not files and not used_cache:
+        raise RuntimeError(
+            "No labelled PCAP files found in 'samples/'. Provide labels.csv or class subdirectories."
+        )
+
     batches_cap = compute_batch_budget(config)
     effective_max_batches = resolve_effective_max_batches(config, batches_cap)
 
@@ -440,18 +462,23 @@ def run_training(config: TrainingConfig) -> None:
         window_budget_for_logs = effective_max_batches * config.batch_size
     set_dataset_budget(dataset, window_budget_for_logs)
 
-    model = build_multitask_moe(task_specs=selected_specs, device=torch.device("cpu"))
-    criterion = nn.BCEWithLogitsLoss()
-    gating_params: List[nn.Parameter] = []
-    for spec in selected_specs:
-        gating_params.extend(model.tasks[spec.name].gating.parameters())
-    optimizer = torch.optim.Adam(gating_params, lr=config.learning_rate)
+    device = torch.device("cpu")
+    model = build_unified_moe(device=device, gating_hidden_dim=config.gating_hidden)
+    print(
+        f"[MoE] Unified gating input={UNIFIED_GATING_INPUT_DIM} hidden={config.gating_hidden} "
+        f"experts={len(model.experts)}"
+    )
+    if config.auto_recon_weight > 0.0:
+        print(f"[Config] Autoencoder auxiliary weight={config.auto_recon_weight}")
+    criterion = nn.CrossEntropyLoss()
+    trainable_params = [param for param in model.parameters() if param.requires_grad]
+    optimizer = torch.optim.Adam(trainable_params, lr=config.learning_rate)
 
     dataloader = DataLoader(dataset, batch_size=None, num_workers=0)
 
     for epoch in range(config.epochs):
         set_dataset_epoch(dataset, epoch)
-        epoch_loss, batch_count, stop_training = train_epoch(
+        epoch_loss, epoch_acc, batch_count, stop_training = train_epoch(
             epoch_index=epoch,
             num_epochs=config.epochs,
             dataloader=dataloader,
@@ -460,21 +487,24 @@ def run_training(config: TrainingConfig) -> None:
             optimizer=optimizer,
             criterion=criterion,
             effective_max_batches=effective_max_batches,
-            selected_tasks=selected_tasks,
+            auto_recon_weight=config.auto_recon_weight,
         )
         average_loss = epoch_loss / batch_count if batch_count else float("nan")
-        print(f"Epoch {epoch + 1} average loss: {average_loss:.4f}")
+        print(
+            f"Epoch {epoch + 1} stats: loss={average_loss:.4f} "
+            f"acc={epoch_acc * 100:.2f}% batches={batch_count}"
+        )
         if stop_training:
             break
 
-    gate_state = {name: task.gating.state_dict() for name, task in model.tasks.items()}
-    output_path = Path(__file__).resolve().parent / "moe_gate.pt"
-    torch.save(gate_state, output_path)
-    print(f"Saved gating weights to {output_path}")
+    model.eval()
+    output_path = Path(__file__).resolve().parent / "unified_moe.pt"
+    torch.save({"state_dict": model.state_dict(), "gating_hidden": config.gating_hidden}, output_path)
+    print(f"Saved unified MoE weights to {output_path}")
 
     if used_cache:
         print("[Cache] Training consumed cached tensors.")
-    summarise(dataset, selected_tasks)
+    summarise(dataset)
 
 
 def main() -> None:

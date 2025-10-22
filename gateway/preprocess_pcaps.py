@@ -24,6 +24,7 @@ from gateway.data_pipeline import (
     CACHE_ROOT,
     MoEDataset,
     PcapInfo,
+    class_id_to_name,
     discover_pcaps,
     tasks_slug,
 )
@@ -205,13 +206,12 @@ def preprocess(args: argparse.Namespace) -> None:
         dataset.set_epoch(0)
 
         feature_buffers: Dict[str, List[torch.Tensor]] = defaultdict(list)
-        label_buffers: Dict[str, List[float]] = {task: [] for task in selected_tasks}
+        target_buffer: List[int] = []
 
-        for batch_features, batch_labels in dataset:
+        for batch_features, batch_targets in dataset:
             for key, tensor in batch_features.items():
                 feature_buffers[key].append(tensor.detach().cpu())
-            for task, tensor in batch_labels.items():
-                label_buffers[task].extend([float(value) for value in tensor.detach().cpu().tolist()])
+            target_buffer.extend(int(value) for value in batch_targets.detach().cpu().tolist())
 
         stats = dataset.stats.get(info.path, {})
         skip_reason = stats.get("skipped_reason") or dataset.skipped.get(info.path)
@@ -232,24 +232,31 @@ def preprocess(args: argparse.Namespace) -> None:
             continue
 
         features = _stack_buffers(feature_buffers)
-        labels = {
-            task: torch.tensor(values, dtype=torch.float32)
-            for task, values in label_buffers.items()
-        }
+        targets_tensor = torch.tensor(target_buffer, dtype=torch.long)
 
         if any(tensor.shape[0] != window_count for tensor in features.values()):
             raise RuntimeError(f"Feature tensor length mismatch while processing {info.path.name}.")
 
-        for task, tensor in labels.items():
-            if tensor.shape[0] != window_count:
-                raise RuntimeError(f"Label tensor length mismatch for task '{task}' in {info.path.name}.")
+        if targets_tensor.shape[0] != window_count:
+            raise RuntimeError(f"Target tensor length mismatch for {info.path.name}.")
+
+        legacy_labels: Dict[str, torch.Tensor] = {}
+        if "dos" in selected_tasks:
+            legacy_labels["dos"] = (targets_tensor == 1).to(torch.float32)
+        if "arp" in selected_tasks:
+            legacy_labels["arp"] = (targets_tensor == 2).to(torch.float32)
+
+        class_label = int(stats.get("label", info.label))
+        label_name = stats.get("label_name", class_id_to_name(class_label))
 
         meta = {
             "source_path": str(info.path),
             "source_size": info.path.stat().st_size if info.path.exists() else 0,
             "windows": window_count,
             "batches": int(stats.get("batches", 0)),
-            "labels": stats.get("labels", {}),
+            "class_label": class_label,
+            "label_name": label_name,
+            "labels": {task: int(class_label == (1 if task == "dos" else 2)) for task in selected_tasks},
             "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "params": {
                 "tasks": list(selected_tasks),
@@ -264,7 +271,8 @@ def preprocess(args: argparse.Namespace) -> None:
         cache_entry = {
             "tasks": list(selected_tasks),
             "features": features,
-            "labels": labels,
+            "targets": targets_tensor,
+            "labels": legacy_labels,
             "meta": meta,
         }
 
@@ -274,7 +282,8 @@ def preprocess(args: argparse.Namespace) -> None:
                 "source": str(info.path),
                 "cache": str(cache_path),
                 "windows": window_count,
-                "labels": meta["labels"],
+                "class_label": class_label,
+                "label_name": label_name,
                 "status": "generated",
             }
         )

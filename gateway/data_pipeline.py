@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import math
 import random
 import time
@@ -51,6 +52,172 @@ from .features import (
     prepare_auto_tensor,
     prepare_dos_static,
 )
+from gateway.moe_model import (
+    ARP_CNN_SEQ_IN_DIM,
+    ARP_CNN_STATIC_DIM,
+    ARP_LSTM_INPUT_DIM,
+    AUTO_FEATURE_DIM,
+    DOS_CNN_SEQ_IN_DIM,
+    DOS_CNN_STATIC_DIM,
+    DOS_LSTM_INPUT_DIM,
+)
+
+
+CLASS_NAME_TO_ID: Dict[str, int] = {
+    "0": 0,
+    "normal": 0,
+    "benign": 0,
+    "background": 0,
+    "1": 1,
+    "dos": 1,
+    "dos_attack": 1,
+    "flood": 1,
+    "attack_dos": 1,
+    "2": 2,
+    "arp": 2,
+    "arp_spoof": 2,
+    "spoof": 2,
+    "poison": 2,
+    "attack_arp": 2,
+}
+CLASS_ID_TO_NAME: Dict[int, str] = {0: "normal", 1: "dos", 2: "arp"}
+CLASS_SUBDIRS: Dict[int, str] = {label: name for label, name in CLASS_ID_TO_NAME.items()}
+
+UNIFIED_GATING_COMPONENT_KEYS: Tuple[str, ...] = (
+    "auto",
+    "dos_cnn_static",
+    "dos_cnn_seq",
+    "dos_lstm_seq",
+    "arp_cnn_static",
+    "arp_cnn_seq",
+    "arp_lstm_seq",
+)
+
+GATING_COMPONENT_LENGTHS: Dict[str, int] = {
+    "auto": AUTO_FEATURE_DIM,
+    "dos_cnn_static": DOS_CNN_STATIC_DIM,
+    "dos_cnn_seq": DOS_MICRO_BINS * DOS_CNN_SEQ_IN_DIM,
+    "dos_lstm_seq": DOS_LSTM_SEQUENCE_LENGTH * DOS_LSTM_INPUT_DIM,
+    "arp_cnn_static": ARP_CNN_STATIC_DIM,
+    "arp_cnn_seq": ARP_MICRO_BINS * ARP_CNN_SEQ_IN_DIM,
+    "arp_lstm_seq": ARP_LSTM_SEQUENCE_LENGTH * ARP_LSTM_INPUT_DIM,
+}
+
+
+def resolve_label_id(value: Any) -> int:
+    if isinstance(value, (int, np.integer)):
+        label = int(value)
+        if label in CLASS_ID_TO_NAME:
+            return label
+        raise ValueError(f"Unsupported label id '{label}'.")
+    if isinstance(value, (float, np.floating)):
+        return resolve_label_id(int(value))
+    if isinstance(value, str):
+        token = value.strip().lower()
+        if token in CLASS_NAME_TO_ID:
+            return CLASS_NAME_TO_ID[token]
+        try:
+            numeric = int(token)
+        except ValueError as exc:  # pragma: no cover - defensive
+            raise ValueError(f"Unsupported label name '{value}'.") from exc
+        return resolve_label_id(numeric)
+    raise TypeError(f"Cannot resolve label from value of type {type(value)}.")
+
+
+def class_id_to_name(label: int) -> str:
+    return CLASS_ID_TO_NAME.get(label, f"class_{label}")
+
+
+def _flatten_for_gating(tensor: Tensor) -> Tensor:
+    if tensor.dim() == 0:
+        return tensor.reshape(1)
+    return tensor.reshape(-1)
+
+
+def build_unified_gating(features: Dict[str, Tensor]) -> Tensor:
+    components: List[Tensor] = []
+    for key in UNIFIED_GATING_COMPONENT_KEYS:
+        expected = GATING_COMPONENT_LENGTHS[key]
+        tensor = features.get(key)
+        if tensor is None:
+            flat = torch.zeros(expected, dtype=torch.float32)
+        else:
+            if not isinstance(tensor, Tensor):
+                raise TypeError(f"Gating component '{key}' must be a tensor.")
+            flat = _flatten_for_gating(tensor).to(torch.float32)
+            if flat.numel() != expected:
+                raise ValueError(
+                    f"Gating component '{key}' has {flat.numel()} elements, expected {expected}."
+                )
+        components.append(flat)
+    if not components:
+        raise ValueError("Cannot assemble unified gating vector without feature tensors.")
+    return torch.cat(components, dim=0)
+
+
+def infer_label_from_tasks(task_labels: Dict[str, Any]) -> Optional[int]:
+    if not isinstance(task_labels, dict):
+        return None
+    try:
+        arp_flag = int(round(float(task_labels.get("arp", 0))))
+        dos_flag = int(round(float(task_labels.get("dos", 0))))
+    except Exception:
+        return None
+    if arp_flag > 0:
+        return 2
+    if dos_flag > 0:
+        return 1
+    return 0
+
+
+def infer_label_from_metadata(meta: Dict[str, Any]) -> Optional[int]:
+    if not isinstance(meta, dict):
+        return None
+    if "class_label" in meta:
+        try:
+            return resolve_label_id(meta["class_label"])
+        except (TypeError, ValueError):
+            pass
+    label_name = meta.get("label_name")
+    if label_name is not None:
+        try:
+            return resolve_label_id(label_name)
+        except (TypeError, ValueError):
+            pass
+    task_labels = meta.get("labels")
+    if isinstance(task_labels, dict):
+        inferred = infer_label_from_tasks(task_labels)
+        if inferred is not None:
+            return inferred
+    return None
+
+
+def coerce_targets_from_cache(raw_labels: Any, default_label: int, window_count: int) -> Tensor:
+    if isinstance(raw_labels, Tensor):
+        tensor = raw_labels.detach().clone()
+        if tensor.dim() == 0:
+            tensor = tensor.reshape(1)
+        tensor = tensor.reshape(-1).to(torch.long)
+        if tensor.shape[0] < window_count:
+            pad = torch.full((window_count - tensor.shape[0],), default_label, dtype=torch.long)
+            tensor = torch.cat([tensor, pad], dim=0)
+        elif tensor.shape[0] > window_count:
+            tensor = tensor[:window_count]
+        return tensor
+    if isinstance(raw_labels, dict):
+        targets = torch.full((window_count,), default_label, dtype=torch.long)
+        if "dos" in raw_labels:
+            dos_tensor = torch.as_tensor(raw_labels["dos"]).reshape(-1)
+            limit = min(window_count, dos_tensor.shape[0])
+            mask = dos_tensor[:limit].round().to(torch.long) > 0
+            targets[:limit][mask] = 1
+        if "arp" in raw_labels:
+            arp_tensor = torch.as_tensor(raw_labels["arp"]).reshape(-1)
+            limit = min(window_count, arp_tensor.shape[0])
+            mask = arp_tensor[:limit].round().to(torch.long) > 0
+            targets[:limit][mask] = 2
+        return targets
+    return torch.full((window_count,), default_label, dtype=torch.long)
 
 
 def _entropy(counter: Counter) -> float:
@@ -487,10 +654,11 @@ class SequenceState:
 @dataclass
 class PcapInfo:
     path: Path
-    labels: Dict[str, int]
+    label: int
+    meta: Dict[str, Any] = field(default_factory=dict)
 
 
-class MoEDataset(IterableDataset[Tuple[Dict[str, Tensor], Dict[str, Tensor]]]):
+class MoEDataset(IterableDataset[Tuple[Dict[str, Tensor], Tensor]]):
     """Iterable dataset that streams PCAP files and yields windowed tensors."""
 
     def __init__(
@@ -533,8 +701,13 @@ class MoEDataset(IterableDataset[Tuple[Dict[str, Tensor], Dict[str, Tensor]]]):
         self.stats: Dict[Path, Dict[str, Any]] = {}
         self.window_callback: Optional[Callable[[PcapInfo, int], None]] = None
         for info in self.files:
-            labels_snapshot = {task: int(info.labels.get(task, 0)) for task in self.tasks}
-            self.stats[info.path] = {"windows": 0, "batches": 0, "labels": labels_snapshot, "truncated_windows": 0}
+            self.stats[info.path] = {
+                "windows": 0,
+                "batches": 0,
+                "label": int(info.label),
+                "label_name": class_id_to_name(int(info.label)),
+                "truncated_windows": 0,
+            }
 
     @staticmethod
     def _default_log(message: str) -> None:
@@ -583,12 +756,8 @@ class MoEDataset(IterableDataset[Tuple[Dict[str, Tensor], Dict[str, Tensor]]]):
     def _log_file_start(self, info: PcapInfo) -> None:
         if info.path in self._seen_files:
             return
-        label_bits = ", ".join(
-            f"{task}={'attack' if info.labels.get(task, 0) else 'normal'}" for task in self.tasks
-        )
-        if not label_bits:
-            label_bits = "n/a"
-        self.log_fn(f"[Stream] {info.path.name}: labels={label_bits}")
+        label_name = class_id_to_name(int(info.label))
+        self.log_fn(f"[Stream] {info.path.name}: label={label_name}")
         self._seen_files.add(info.path)
 
     def _maybe_log_progress(self, info: PcapInfo, windows_for_file: int) -> None:
@@ -626,7 +795,7 @@ class MoEDataset(IterableDataset[Tuple[Dict[str, Tensor], Dict[str, Tensor]]]):
                 f"[WindowBudget] Global window cap ({self.max_total_windows}) reached while reading {info.path.name}; halting stream."
             )
 
-    def _iter_file(self, info: PcapInfo) -> Iterator[Tuple[Dict[str, Tensor], Dict[str, Tensor]]]:
+    def _iter_file(self, info: PcapInfo) -> Iterator[Tuple[Dict[str, Tensor], Tensor]]:
         if not info.path.exists():
             return
         if self.max_total_windows is not None and self.total_windows_processed >= self.max_total_windows:
@@ -646,7 +815,6 @@ class MoEDataset(IterableDataset[Tuple[Dict[str, Tensor], Dict[str, Tensor]]]):
         self._log_file_start(info)
 
         micro_bins: Dict[str, int] = {}
-        truncated = False
         if "dos" in self.tasks:
             micro_bins["dos"] = DOS_MICRO_BINS
         if "arp" in self.tasks:
@@ -662,12 +830,39 @@ class MoEDataset(IterableDataset[Tuple[Dict[str, Tensor], Dict[str, Tensor]]]):
         arp_state = SequenceState(ARP_LSTM_SEQUENCE_LENGTH) if "arp" in self.tasks else None
 
         batch_features: Dict[str, List[Tensor]] = defaultdict(list)
-        batch_labels: Dict[str, List[float]] = {task: [] for task in self.tasks}
+        batch_targets: List[int] = []
         windows_for_file = 0
         stop_file = False
         drop_reason: Optional[str] = None
         packets_seen = 0
         start_time = time.monotonic()
+
+        def _push_window(window_features: Dict[str, Tensor]) -> bool:
+            nonlocal windows_for_file
+            truncated_flag = window_features.pop("_truncated", None)
+            try:
+                window_features.setdefault("gating_input", build_unified_gating(window_features))
+            except Exception as exc:  # pragma: no cover - defensive
+                self.log_fn(f"[SkipWindow] {info.path.name}: gating assembly failed ({exc}).")
+                return False
+            for key, value in window_features.items():
+                if key == "_truncated":
+                    continue
+                if not isinstance(value, Tensor):
+                    self.log_fn(
+                        f"[SkipWindow] {info.path.name}: feature '{key}' missing tensor data; dropping window."
+                    )
+                    return False
+                batch_features[key].append(value)
+            batch_targets.append(int(info.label))
+            self.stats[info.path]["windows"] += 1
+            if truncated_flag is not None:
+                self.stats[info.path]["truncated_windows"] += 1
+            windows_for_file += 1
+            self.total_windows_processed += 1
+            self._notify_windows(info, 1)
+            self._maybe_log_progress(info, windows_for_file)
+            return len(batch_targets) >= self.batch_size
 
         with PcapReader(str(info.path)) as reader:
             for pkt in reader:
@@ -726,23 +921,10 @@ class MoEDataset(IterableDataset[Tuple[Dict[str, Tensor], Dict[str, Tensor]]]):
                     features = self._finalize_window(buffer, dos_state, arp_state)
                     if features is None:
                         continue
-                    truncated_flag = features.pop("_truncated", None)
-                    for key, value in features.items():
-                        batch_features[key].append(value)
-                    for task in batch_labels:
-                        batch_labels[task].append(float(info.labels.get(task, 0)))
-                    self.stats[info.path]["windows"] += 1
-                    if truncated_flag is not None:
-                        self.stats[info.path]["truncated_windows"] += 1
-                    windows_for_file += 1
-                    self.total_windows_processed += 1
-                    self._notify_windows(info, 1)
-                    self._maybe_log_progress(info, windows_for_file)
-                    first_task = next(iter(batch_labels)) if batch_labels else None
-                    if first_task and len(batch_labels[first_task]) >= self.batch_size:
-                        yield self._stack_batch(batch_features, batch_labels)
+                    if _push_window(features):
+                        yield self._stack_batch(batch_features, batch_targets)
                         batch_features = defaultdict(list)
-                        batch_labels = {task: [] for task in self.tasks}
+                        batch_targets = []
                         self.stats[info.path]["batches"] += 1
                     if (
                         self.max_windows_per_file is not None
@@ -766,22 +948,10 @@ class MoEDataset(IterableDataset[Tuple[Dict[str, Tensor], Dict[str, Tensor]]]):
                 features = self._finalize_window(buffer, dos_state, arp_state)
                 if features is None:
                     continue
-                for key, value in features.items():
-                    if key == "_truncated":
-                        continue
-                    batch_features[key].append(value)
-                for task in batch_labels:
-                    batch_labels[task].append(float(info.labels.get(task, 0)))
-                self.stats[info.path]["windows"] += 1
-                windows_for_file += 1
-                self.total_windows_processed += 1
-                self._notify_windows(info, 1)
-                self._maybe_log_progress(info, windows_for_file)
-                first_task = next(iter(batch_labels)) if batch_labels else None
-                if first_task and len(batch_labels[first_task]) >= self.batch_size:
-                    yield self._stack_batch(batch_features, batch_labels)
+                if _push_window(features):
+                    yield self._stack_batch(batch_features, batch_targets)
                     batch_features = defaultdict(list)
-                    batch_labels = {task: [] for task in self.tasks}
+                    batch_targets = []
                     self.stats[info.path]["batches"] += 1
                 if (
                     self.max_windows_per_file is not None
@@ -798,26 +968,25 @@ class MoEDataset(IterableDataset[Tuple[Dict[str, Tensor], Dict[str, Tensor]]]):
 
         if drop_reason is not None:
             batch_features = defaultdict(list)
-            batch_labels = {task: [] for task in self.tasks}
+            batch_targets = []
             if self.stats[info.path]["batches"] == 0:
                 self.total_windows_processed = max(0, self.total_windows_processed - windows_for_file)
                 self.stats[info.path]["windows"] = 0
             self._mark_skip(info, drop_reason)
             return
 
-        remaining_task = next(iter(batch_labels)) if batch_labels else None
-        if remaining_task and batch_labels[remaining_task]:
-            yield self._stack_batch(batch_features, batch_labels)
+        if batch_targets:
+            yield self._stack_batch(batch_features, batch_targets)
             self.stats[info.path]["batches"] += 1
 
     def _stack_batch(
         self,
         batch_features: Dict[str, List[Tensor]],
-        batch_labels: Dict[str, List[float]],
-    ) -> Tuple[Dict[str, Tensor], Dict[str, Tensor]]:
+        batch_targets: Sequence[int],
+    ) -> Tuple[Dict[str, Tensor], Tensor]:
         features = {key: torch.stack(values, dim=0) for key, values in batch_features.items()}
-        labels = {task: torch.tensor(values, dtype=torch.float32) for task, values in batch_labels.items()}
-        return features, labels
+        targets = torch.tensor(list(batch_targets), dtype=torch.long)
+        return features, targets
 
     def _finalize_window(
         self,
@@ -836,42 +1005,55 @@ class MoEDataset(IterableDataset[Tuple[Dict[str, Tensor], Dict[str, Tensor]]]):
             if dos_state is None:
                 raise RuntimeError("DoS task selected but DOS state not initialised.")
             dos_rows = buffer.task_rows.get("dos", [])
-            if not dos_rows:
-                return None
-            dos_seq_np, dos_extras = compute_dos_sequence_features(
-                dos_rows,
-                buffer.bin_indices.get("dos", []),
-                DOS_MICRO_BINS,
-                TOP_UDP_PORTS,
-            )
-            dos_static_vec, dos_static_names, _ = compute_dos_static_features(
-                dos_rows,
-                DOS_MICRO_BINS,
-                dos_extras["per_bin_total_pkts"],
-                TOP_UDP_PORTS,
-                WINDOW_SIZE,
-            )
-            dos_cnn_seq_tensor = torch.from_numpy(dos_seq_np.astype(np.float32))
-            dos_cnn_static_tensor = torch.from_numpy(prepare_dos_static(dos_static_vec.astype(np.float32)))
-            dos_window = _build_dos_window(buffer.index, buffer.start, buffer.end, dos_rows)
-            dos_features = DOS_FEATURE_EXTRACTOR._features_for_window(dos_window)
-            dos_lstm_seq_tensor = dos_state.update(dos_features, DOS_LSTM_SCALER)
+            if dos_rows:
+                try:
+                    dos_seq_np, dos_extras = compute_dos_sequence_features(
+                        dos_rows,
+                        buffer.bin_indices.get("dos", []),
+                        DOS_MICRO_BINS,
+                        TOP_UDP_PORTS,
+                    )
+                    dos_static_vec, dos_static_names, _ = compute_dos_static_features(
+                        dos_rows,
+                        DOS_MICRO_BINS,
+                        dos_extras["per_bin_total_pkts"],
+                        TOP_UDP_PORTS,
+                        WINDOW_SIZE,
+                    )
+                    dos_cnn_seq_tensor = torch.from_numpy(dos_seq_np.astype(np.float32))
+                    dos_cnn_static_tensor = torch.from_numpy(prepare_dos_static(dos_static_vec.astype(np.float32)))
+                    dos_window = _build_dos_window(buffer.index, buffer.start, buffer.end, dos_rows)
+                    dos_features = DOS_FEATURE_EXTRACTOR._features_for_window(dos_window)
+                    dos_lstm_seq_tensor = dos_state.update(dos_features, DOS_LSTM_SCALER)
+                except Exception:
+                    dos_cnn_seq_tensor = torch.zeros((DOS_MICRO_BINS, DOS_CNN_SEQ_IN_DIM), dtype=torch.float32)
+                    dos_cnn_static_tensor = torch.zeros(DOS_CNN_STATIC_DIM, dtype=torch.float32)
+                    dos_lstm_seq_tensor = torch.zeros(
+                        (DOS_LSTM_SEQUENCE_LENGTH, DOS_LSTM_INPUT_DIM),
+                        dtype=torch.float32,
+                    )
+            else:
+                dos_cnn_seq_tensor = torch.zeros((DOS_MICRO_BINS, DOS_CNN_SEQ_IN_DIM), dtype=torch.float32)
+                dos_cnn_static_tensor = torch.zeros(DOS_CNN_STATIC_DIM, dtype=torch.float32)
+                dos_lstm_seq_tensor = torch.zeros(
+                    (DOS_LSTM_SEQUENCE_LENGTH, DOS_LSTM_INPUT_DIM),
+                    dtype=torch.float32,
+                )
             truncated = truncated or buffer.truncated
-            dos_gating = torch.cat(
-                [
-                    auto_tensor,
-                    dos_cnn_static_tensor,
-                    dos_cnn_seq_tensor.reshape(-1),
-                    dos_lstm_seq_tensor.reshape(-1),
-                ],
-                dim=0,
-            )
             features.update(
                 {
                     "dos_cnn_seq": dos_cnn_seq_tensor,
                     "dos_cnn_static": dos_cnn_static_tensor,
                     "dos_lstm_seq": dos_lstm_seq_tensor,
-                    "dos_gating": dos_gating,
+                    "dos_gating": torch.cat(
+                        [
+                            auto_tensor.reshape(-1),
+                            dos_cnn_static_tensor.reshape(-1),
+                            dos_cnn_seq_tensor.reshape(-1),
+                            dos_lstm_seq_tensor.reshape(-1),
+                        ],
+                        dim=0,
+                    ),
                 }
             )
 
@@ -879,51 +1061,65 @@ class MoEDataset(IterableDataset[Tuple[Dict[str, Tensor], Dict[str, Tensor]]]):
             if arp_state is None:
                 raise RuntimeError("ARP task selected but ARP state not initialised.")
             arp_rows = buffer.task_rows.get("arp", [])
-            if not arp_rows:
-                return None
-            arp_seq_np, arp_extras = compute_arp_sequence_features(
-                arp_rows,
-                buffer.bin_indices.get("arp", []),
-                ARP_MICRO_BINS,
-            )
-            arp_static_vec, arp_static_names, _ = compute_arp_static_features(
-                arp_rows,
-                ARP_MICRO_BINS,
-                arp_extras,
-                ARP_WINDOW_SIZE,
-            )
-            arp_cnn_seq_tensor = torch.from_numpy(arp_seq_np.astype(np.float32))
-            arp_cnn_static_tensor = torch.from_numpy(prepare_arp_static(arp_static_vec.astype(np.float32)))
-            arp_window = _build_arp_window(buffer.index, buffer.start, buffer.end, arp_rows)
-            arp_features = ARP_FEATURE_EXTRACTOR._features_for_window(arp_window)
-            arp_lstm_seq_tensor = arp_state.update(arp_features, ARP_LSTM_SCALER)
+            if arp_rows:
+                try:
+                    arp_seq_np, arp_extras = compute_arp_sequence_features(
+                        arp_rows,
+                        buffer.bin_indices.get("arp", []),
+                        ARP_MICRO_BINS,
+                    )
+                    arp_static_vec, arp_static_names, _ = compute_arp_static_features(
+                        arp_rows,
+                        ARP_MICRO_BINS,
+                        arp_extras,
+                        ARP_WINDOW_SIZE,
+                    )
+                    arp_cnn_seq_tensor = torch.from_numpy(arp_seq_np.astype(np.float32))
+                    arp_cnn_static_tensor = torch.from_numpy(prepare_arp_static(arp_static_vec.astype(np.float32)))
+                    arp_window = _build_arp_window(buffer.index, buffer.start, buffer.end, arp_rows)
+                    arp_features = ARP_FEATURE_EXTRACTOR._features_for_window(arp_window)
+                    arp_lstm_seq_tensor = arp_state.update(arp_features, ARP_LSTM_SCALER)
+                except Exception:
+                    arp_cnn_seq_tensor = torch.zeros((ARP_MICRO_BINS, ARP_CNN_SEQ_IN_DIM), dtype=torch.float32)
+                    arp_cnn_static_tensor = torch.zeros(ARP_CNN_STATIC_DIM, dtype=torch.float32)
+                    arp_lstm_seq_tensor = torch.zeros(
+                        (ARP_LSTM_SEQUENCE_LENGTH, ARP_LSTM_INPUT_DIM),
+                        dtype=torch.float32,
+                    )
+            else:
+                arp_cnn_seq_tensor = torch.zeros((ARP_MICRO_BINS, ARP_CNN_SEQ_IN_DIM), dtype=torch.float32)
+                arp_cnn_static_tensor = torch.zeros(ARP_CNN_STATIC_DIM, dtype=torch.float32)
+                arp_lstm_seq_tensor = torch.zeros(
+                    (ARP_LSTM_SEQUENCE_LENGTH, ARP_LSTM_INPUT_DIM),
+                    dtype=torch.float32,
+                )
             truncated = truncated or buffer.truncated
-            arp_gating = torch.cat(
-                [
-                    auto_tensor,
-                    arp_cnn_static_tensor,
-                    arp_cnn_seq_tensor.reshape(-1),
-                    arp_lstm_seq_tensor.reshape(-1),
-                ],
-                dim=0,
-            )
             features.update(
                 {
                     "arp_cnn_seq": arp_cnn_seq_tensor,
                     "arp_cnn_static": arp_cnn_static_tensor,
                     "arp_lstm_seq": arp_lstm_seq_tensor,
-                    "arp_gating": arp_gating,
+                    "arp_gating": torch.cat(
+                        [
+                            auto_tensor.reshape(-1),
+                            arp_cnn_static_tensor.reshape(-1),
+                            arp_cnn_seq_tensor.reshape(-1),
+                            arp_lstm_seq_tensor.reshape(-1),
+                        ],
+                        dim=0,
+                    ),
                 }
             )
 
         if len(features) <= 1:  # only auto tensor present
             return None
         truncated = truncated or buffer.truncated
+        features["gating_input"] = build_unified_gating(features)
         if truncated:
             features["_truncated"] = torch.tensor([1], dtype=torch.float32)
         return features
 
-    def __iter__(self) -> Iterator[Tuple[Dict[str, Tensor], Dict[str, Tensor]]]:
+    def __iter__(self) -> Iterator[Tuple[Dict[str, Tensor], Tensor]]:
         rng = random.Random(self.seed + self._epoch)
         indices = list(range(len(self.files)))
         if self.shuffle and len(indices) > 1:
@@ -932,7 +1128,7 @@ class MoEDataset(IterableDataset[Tuple[Dict[str, Tensor], Dict[str, Tensor]]]):
             yield from self._iter_file(self.files[idx])
 
 
-class CachedMoEDataset(IterableDataset[Tuple[Dict[str, Tensor], Dict[str, Tensor]]]):
+class CachedMoEDataset(IterableDataset[Tuple[Dict[str, Tensor], Tensor]]):
     """Iterable dataset backed by cached tensors."""
 
     def __init__(
@@ -961,8 +1157,18 @@ class CachedMoEDataset(IterableDataset[Tuple[Dict[str, Tensor], Dict[str, Tensor
         for idx, entry in enumerate(self.cache_entries):
             meta = entry.get("meta", {})
             source_path = Path(meta.get("source_path", f"cache_{idx}.pcap"))
-            labels_snapshot = {task: int(meta.get("labels", {}).get(task, 0)) for task in self.tasks}
-            self.stats[source_path] = {"windows": 0, "batches": 0, "labels": labels_snapshot}
+            label = infer_label_from_metadata(meta)
+            if label is None:
+                label = 0
+            label = int(label)
+            entry["class_label"] = label
+            self.stats[source_path] = {
+                "windows": 0,
+                "batches": 0,
+                "label": label,
+                "label_name": class_id_to_name(label),
+                "truncated_windows": 0,
+            }
             entry["path"] = source_path
             features = entry.get("features", {})
             if not features:
@@ -978,7 +1184,12 @@ class CachedMoEDataset(IterableDataset[Tuple[Dict[str, Tensor], Dict[str, Tensor
                 self.stats[source_path]["skipped_reason"] = reason
                 entry["num_windows"] = 0
                 continue
-            entry["num_windows"] = min(feature_lengths.values())
+            window_count = min(feature_lengths.values())
+            entry["num_windows"] = window_count
+            raw_targets = entry.get("targets")
+            if raw_targets is None:
+                raw_targets = entry.get("labels")
+            entry["targets"] = coerce_targets_from_cache(raw_targets, label, window_count)
 
         max_windows_per_file = max_windows_per_file if max_windows_per_file and max_windows_per_file > 0 else None
         max_total_windows = max_total_windows if max_total_windows and max_total_windows > 0 else None
@@ -1011,13 +1222,13 @@ class CachedMoEDataset(IterableDataset[Tuple[Dict[str, Tensor], Dict[str, Tensor
     def _stack_batch(
         self,
         batch_features: Dict[str, List[Tensor]],
-        batch_labels: Dict[str, List[float]],
-    ) -> Tuple[Dict[str, Tensor], Dict[str, Tensor]]:
+        batch_targets: Sequence[int],
+    ) -> Tuple[Dict[str, Tensor], Tensor]:
         features = {key: torch.stack(values, dim=0) for key, values in batch_features.items()}
-        labels = {task: torch.tensor(values, dtype=torch.float32) for task, values in batch_labels.items()}
-        return features, labels
+        targets = torch.tensor(list(batch_targets), dtype=torch.long)
+        return features, targets
 
-    def __iter__(self) -> Iterator[Tuple[Dict[str, Tensor], Dict[str, Tensor]]]:
+    def __iter__(self) -> Iterator[Tuple[Dict[str, Tensor], Tensor]]:
         if not self._window_indices:
             return iter([])
         rng = random.Random(self.seed + self._epoch)
@@ -1026,7 +1237,7 @@ class CachedMoEDataset(IterableDataset[Tuple[Dict[str, Tensor], Dict[str, Tensor
             rng.shuffle(order)
 
         batch_features: Dict[str, List[Tensor]] = defaultdict(list)
-        batch_labels: Dict[str, List[float]] = {task: [] for task in self.tasks}
+        batch_targets: List[int] = []
         batch_sources: Set[Path] = set()
 
         for position in order:
@@ -1034,77 +1245,131 @@ class CachedMoEDataset(IterableDataset[Tuple[Dict[str, Tensor], Dict[str, Tensor
             entry = self.cache_entries[file_idx]
             path = entry["path"]
             features = entry["features"]
-            labels = entry["labels"]
+            targets_tensor: Tensor = entry["targets"]
 
+            window_features: Dict[str, Tensor] = {}
             for key, tensor in features.items():
-                batch_features[key].append(tensor[window_idx])
-            for task in self.tasks:
-                batch_labels[task].append(float(labels[task][window_idx].item()))
+                window_features[key] = tensor[window_idx]
+            truncated_flag = window_features.pop("_truncated", None)
+            try:
+                window_features.setdefault("gating_input", build_unified_gating(window_features))
+            except Exception as exc:  # pragma: no cover - defensive
+                self.log_fn(f"[SkipWindow] Failed to assemble gating input from cache {path.name}: {exc}")
+                continue
+            invalid = False
+            for key, value in window_features.items():
+                if not isinstance(value, Tensor):
+                    self.log_fn(
+                        f"[SkipWindow] Cache {path.name}: feature '{key}' missing tensor data; dropping window."
+                    )
+                    invalid = True
+                    break
+            if invalid:
+                continue
+            for key, value in window_features.items():
+                batch_features[key].append(value)
+            target_value = int(targets_tensor[window_idx].item())
+            batch_targets.append(target_value)
 
             self.stats[path]["windows"] += 1
+            if truncated_flag is not None:
+                self.stats[path]["truncated_windows"] += 1
             batch_sources.add(path)
 
-            first_task = next(iter(batch_labels)) if batch_labels else None
-            if first_task and len(batch_labels[first_task]) >= self.batch_size:
-                features_tensor, labels_tensor = self._stack_batch(batch_features, batch_labels)
-                yield features_tensor, labels_tensor
+            if len(batch_targets) >= self.batch_size:
+                features_tensor, targets_tensor_out = self._stack_batch(batch_features, batch_targets)
+                yield features_tensor, targets_tensor_out
                 for source in batch_sources:
                     self.stats[source]["batches"] += 1
                 batch_features = defaultdict(list)
-                batch_labels = {task: [] for task in self.tasks}
+                batch_targets = []
                 batch_sources = set()
 
-        if batch_labels:
-            first_task = next(iter(batch_labels)) if batch_labels else None
-            if first_task and batch_labels[first_task]:
-                features_tensor, labels_tensor = self._stack_batch(batch_features, batch_labels)
-                yield features_tensor, labels_tensor
-                for source in batch_sources:
-                    self.stats[source]["batches"] += 1
+        if batch_targets:
+            features_tensor, targets_tensor_out = self._stack_batch(batch_features, batch_targets)
+            yield features_tensor, targets_tensor_out
+            for source in batch_sources:
+                self.stats[source]["batches"] += 1
 
 
-def _infer_label_from_name(name: str, attack_tokens: Sequence[str], benign_tokens: Sequence[str]) -> Optional[int]:
-    lower = name.lower()
-    for token in attack_tokens:
-        if token in lower:
-            return 1
-    for token in benign_tokens:
-        if token in lower:
-            return 0
-    return None
+def _load_labels_from_csv(base_dir: Path) -> Dict[Path, Dict[str, Any]]:
+    manifest_path = base_dir / "labels.csv"
+    if not manifest_path.exists():
+        return {}
+    entries: Dict[Path, Dict[str, Any]] = {}
+    with manifest_path.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle)
+        if reader.fieldnames is None:
+            raise ValueError("labels.csv must include a header row with at least 'filename' and 'label'.")
+        name_fields = [field for field in ("filename", "file", "pcap", "path") if field in reader.fieldnames]
+        if not name_fields:
+            raise ValueError("labels.csv header must include one of: filename, file, pcap, path.")
+        label_fields = [field for field in ("label", "class", "target") if field in reader.fieldnames]
+        if not label_fields:
+            raise ValueError("labels.csv header must include a 'label' (or class/target) column.")
+        for row in reader:
+            raw_name = next((row.get(field) for field in name_fields if row.get(field)), None)
+            if not raw_name:
+                continue
+            raw_label = next((row.get(field) for field in label_fields if row.get(field) is not None), None)
+            if raw_label is None:
+                raise ValueError(f"Row for '{raw_name}' missing label column in labels.csv.")
+            label_id = resolve_label_id(raw_label)
+            candidate = Path(raw_name)
+            if not candidate.is_absolute():
+                candidate = (base_dir / candidate).resolve()
+            if not candidate.exists():
+                # Fallback: treat value as filename relative to base directory root.
+                candidate = (base_dir / Path(raw_name).name).resolve()
+            if not candidate.exists():
+                raise FileNotFoundError(f"Manifest entry '{raw_name}' does not match an existing PCAP file.")
+            entries[candidate] = {
+                "label": label_id,
+                "meta": {
+                    "label_source": "labels.csv",
+                    "label_name": class_id_to_name(label_id),
+                    "manifest_path": str(manifest_path),
+                },
+            }
+    return entries
 
 
-def discover_pcaps(tasks: Sequence[str]) -> List[PcapInfo]:
-    tasks = tuple(dict.fromkeys(task.lower() for task in tasks))
-    registry: Dict[Path, Dict[str, int]] = {}
+def _load_labels_from_subdirs(base_dir: Path) -> Dict[Path, Dict[str, Any]]:
+    entries: Dict[Path, Dict[str, Any]] = {}
+    for label_id, folder_name in CLASS_SUBDIRS.items():
+        folder = base_dir / folder_name
+        if not folder.exists():
+            continue
+        for pcap in sorted(folder.rglob("*.pcap")):
+            path = pcap.resolve()
+            entries.setdefault(
+                path,
+                {
+                    "label": label_id,
+                    "meta": {
+                        "label_source": "folder",
+                        "folder": str(folder),
+                        "label_name": class_id_to_name(label_id),
+                    },
+                },
+            )
+    return entries
 
-    def _ensure_entry(path: Path) -> Dict[str, int]:
-        return registry.setdefault(path, {task: 0 for task in tasks})
 
+def discover_pcaps(tasks: Optional[Sequence[str]] = None) -> List[PcapInfo]:
     SAMPLES_DIR.mkdir(parents=True, exist_ok=True)
+    records = _load_labels_from_csv(SAMPLES_DIR)
+    folder_records = _load_labels_from_subdirs(SAMPLES_DIR)
+    for path, payload in folder_records.items():
+        records.setdefault(path, payload)
 
-    def _sort_key(path: Path) -> Tuple[float, str]:
-        try:
-            size = float(path.stat().st_size)
-        except OSError:
-            size = float("inf")
-        return (size, path.name.lower())
+    infos: List[PcapInfo] = []
+    for path, payload in records.items():
+        label = int(payload["label"])
+        meta = dict(payload.get("meta", {}))
+        infos.append(PcapInfo(path=path, label=label, meta=meta))
 
-    for pcap in sorted(SAMPLES_DIR.glob("*.pcap"), key=_sort_key):
-        entry = None
-        if "dos" in tasks:
-            dos_label = _infer_label_from_name(pcap.name, ("mixed", "attack", "dos", "flood"), ("normal",))
-            if dos_label is not None:
-                entry = _ensure_entry(pcap)
-                entry["dos"] = dos_label
-        if "arp" in tasks:
-            arp_label = _infer_label_from_name(pcap.name, ("attack", "spoof", "poison", "arp"), ("normal",))
-            if arp_label is not None:
-                entry = _ensure_entry(pcap)
-                entry["arp"] = arp_label
-
-    infos = [PcapInfo(path=path, labels=labels) for path, labels in registry.items()]
-    infos.sort(key=lambda info: str(info.path))
+    infos.sort(key=lambda info: (info.path.name.lower(), str(info.path)))
     return infos
 
 
@@ -1128,6 +1393,30 @@ def load_cache_entries(
         return entries, missing, mismatched
 
     task_signature = tuple(sorted(tasks))
+    if not files:
+        for cache_path in sorted(cache_dir.glob("*.pt")):
+            try:
+                data = torch.load(cache_path, map_location="cpu")
+            except Exception as exc:  # pragma: no cover - IO failure
+                mismatched.append((cache_path, f"failed to load cache ({exc})"))
+                continue
+            cache_tasks = tuple(sorted(data.get("tasks", [])))
+            if cache_tasks and cache_tasks != task_signature:
+                mismatched.append((cache_path, "cache tasks mismatch"))
+                continue
+            features = data.get("features")
+            if not isinstance(features, dict) or not features:
+                mismatched.append((cache_path, "cache missing feature tensors"))
+                continue
+            meta = data.get("meta", {})
+            source_path = Path(meta.get("source_path", cache_path.stem))
+            cache_label = infer_label_from_metadata(meta)
+            if cache_label is None:
+                cache_label = 0
+            info = PcapInfo(path=source_path, label=int(cache_label), meta=dict(meta))
+            entries.append({"data": data, "path": source_path, "cache_path": cache_path, "info": info})
+        return entries, missing, mismatched
+
     for info in files:
         cache_path = cache_dir / f"{info.path.name}.pt"
         if not cache_path.exists():
@@ -1139,21 +1428,27 @@ def load_cache_entries(
             mismatched.append((info.path, f"failed to load cache ({exc})"))
             continue
         cache_tasks = tuple(sorted(data.get("tasks", [])))
-        if cache_tasks != task_signature:
+        if cache_tasks and cache_tasks != task_signature:
             mismatched.append((info.path, "cache tasks mismatch"))
             continue
         features = data.get("features")
-        labels = data.get("labels")
-        if not isinstance(features, dict) or not isinstance(labels, dict):
+        if not isinstance(features, dict) or not features:
             mismatched.append((info.path, "cache missing feature tensors"))
             continue
-        entries.append({"data": data, "path": info.path, "cache_path": cache_path})
+        meta = data.get("meta", {})
+        cache_label = infer_label_from_metadata(meta)
+        if cache_label is not None:
+            updated_meta = dict(info.meta)
+            updated_meta.update(meta)
+            info = PcapInfo(path=info.path, label=int(cache_label), meta=updated_meta)
+        entries.append({"data": data, "path": info.path, "cache_path": cache_path, "info": info})
     return entries, missing, mismatched
 
 
 __all__ = [
     "AutoFeatureAccumulator",
     "CachedMoEDataset",
+    "class_id_to_name",
     "MoEDataset",
     "PcapInfo",
     "SequenceState",
