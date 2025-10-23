@@ -20,14 +20,8 @@ if str(PROJECT_ROOT) not in sys.path:
 import torch
 from tqdm import tqdm
 
-from gateway.data_pipeline import (
-    CACHE_ROOT,
-    MoEDataset,
-    PcapInfo,
-    class_id_to_name,
-    discover_pcaps,
-    tasks_slug,
-)
+from gateway.data.structures.pcap import PcapInfo
+from gateway.data_pipeline import CACHE_ROOT, MoEDataset, class_id_to_name, discover_pcaps, tasks_slug
 
 
 def parse_args() -> argparse.Namespace:
