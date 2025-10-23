@@ -110,8 +110,6 @@ def decide_verdict(
     majority_fraction = class_stats[majority_label].fraction
     if majority_label != "normal" and majority_fraction >= attack_threshold:
         return majority_label
-    if majority_fraction >= attack_threshold:
-        return majority_label
 
     probability_winner = max(class_stats.values(), key=lambda stat: stat.mean_probability)
     if probability_winner.label != "normal":
