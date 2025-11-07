@@ -1,0 +1,73 @@
+{
+  "feature_columns": [
+    "pkts_per_s",
+    "bytes_per_s",
+    "arp_pkts_per_s",
+    "arp_bytes_per_s",
+    "arp_fraction",
+    "arp_request_rate",
+    "arp_reply_rate",
+    "arp_gratuitous_rate",
+    "arp_gratuitous_fraction",
+    "arp_reply_to_request_ratio",
+    "arp_request_to_reply_ratio",
+    "arp_iat_mean",
+    "arp_iat_std",
+    "unique_sender_ips",
+    "unique_sender_macs",
+    "unique_target_ips",
+    "unique_target_macs",
+    "unique_sender_target_pairs",
+    "max_claims_per_ip",
+    "mean_claims_per_ip",
+    "conflict_ip_ratio",
+    "max_ips_per_mac",
+    "mean_ips_per_mac",
+    "sender_conflict_ratio",
+    "target_conflict_ratio"
+  ],
+  "frames": [
+    {
+      "duration": 140231013.45947695,
+      "packet_count": 2147976,
+      "pcap": "attack.pcap",
+      "rows": 50000
+    },
+    {
+      "duration": 86398.67226910591,
+      "packet_count": 2136429,
+      "pcap": "normal1.pcap",
+      "rows": 50000
+    },
+    {
+      "duration": 86397.93182110786,
+      "packet_count": 1921098,
+      "pcap": "normal2.pcap",
+      "rows": 50000
+    },
+    {
+      "duration": 19.41725993156433,
+      "packet_count": 328,
+      "pcap": "pure_attack.pcap",
+      "rows": 39
+    },
+    {
+      "duration": 10.030643939971924,
+      "packet_count": 8,
+      "pcap": "pure_attack2.pcap",
+      "rows": 21
+    },
+    {
+      "duration": 329.0,
+      "packet_count": 124,
+      "pcap": "synthetic_arp_spoof.pcap",
+      "rows": 659
+    },
+    {
+      "duration": 279.0,
+      "packet_count": 265,
+      "pcap": "synthetic_arp_spoof_extended.pcap",
+      "rows": 559
+    }
+  ]
+}
