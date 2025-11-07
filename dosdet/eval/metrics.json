@@ -1,0 +1,11 @@
+{
+  "accuracy": 0.9973809523809524,
+  "precision": 0.0,
+  "recall": 0.0,
+  "f1": 0.0,
+  "roc_auc": null,
+  "threshold": 0.7658661603927612,
+  "temperature": 2.460012197494507,
+  "samples": 105000,
+  "positives": 0
+}

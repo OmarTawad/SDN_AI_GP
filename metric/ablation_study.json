@@ -1,0 +1,26 @@
+{
+  "CNN+LSTM": {
+    "found": false,
+    "metrics": {},
+    "sources": [],
+    "notes": [
+      "No matching evaluation files detected."
+    ]
+  },
+  "CNN+AE": {
+    "found": false,
+    "metrics": {},
+    "sources": [],
+    "notes": [
+      "No matching evaluation files detected."
+    ]
+  },
+  "LSTM+AE": {
+    "found": false,
+    "metrics": {},
+    "sources": [],
+    "notes": [
+      "No matching evaluation files detected."
+    ]
+  }
+}
