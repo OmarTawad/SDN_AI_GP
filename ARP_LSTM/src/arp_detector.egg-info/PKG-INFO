@@ -2,7 +2,7 @@ Metadata-Version: 2.4
 Name: arp-detector
 Version: 0.1.0
 Summary: PCAP-based ARP spoofing detector using sequence models
-Author-email: SDN AI GP <maintainer@example.com>
+Author-email: Omar Awad <Omar.t.awad@gmail.com>
 Requires-Python: >=3.10
 Requires-Dist: numpy>=1.26
 Requires-Dist: pandas>=2.0
@@ -26,3 +26,17 @@ Requires-Dist: black>=23.0; extra == "dev"
 Requires-Dist: ruff>=0.1.5; extra == "dev"
 Requires-Dist: pytest>=7.3; extra == "dev"
 Requires-Dist: pytest-cov>=4.0; extra == "dev"
+Provides-Extra: neural-lstm
+Requires-Dist: numpy>=1.26; extra == "neural-lstm"
+Requires-Dist: pandas>=2.0; extra == "neural-lstm"
+Requires-Dist: torch>=2.2; extra == "neural-lstm"
+Requires-Dist: scikit-learn>=1.4; extra == "neural-lstm"
+Requires-Dist: joblib>=1.2; extra == "neural-lstm"
+Requires-Dist: pyarrow>=16.0.0; extra == "neural-lstm"
+Requires-Dist: psutil>=5.9; extra == "neural-lstm"
+Requires-Dist: PyYAML>=6.0.1; extra == "neural-lstm"
+Requires-Dist: scapy>=2.5.0; extra == "neural-lstm"
+Requires-Dist: structlog>=23.1; extra == "neural-lstm"
+Requires-Dist: tqdm>=4.66; extra == "neural-lstm"
+Requires-Dist: typer[all]>=0.9; extra == "neural-lstm"
+Requires-Dist: shap>=0.41; extra == "neural-lstm"

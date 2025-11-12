@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any, Dict
 
@@ -40,9 +41,26 @@ def save_dataframe(path: Path, frame: pd.DataFrame) -> None:
 
 
 def load_dataframe(path: Path) -> pd.DataFrame:
-    """Load a dataframe from Parquet."""
+    """Load a dataframe from Parquet, allowing the engine to be selected via env."""
 
-    return pd.read_parquet(path)
+    pref = os.environ.get("ARP_LSTM_PARQUET_ENGINE", "fastparquet").lower()
+    default_order = ("fastparquet", "pyarrow")
+    if pref == "auto":
+        engines = default_order
+    elif pref in ("pyarrow", "fastparquet"):
+        engines = (pref,)
+    else:
+        engines = default_order
+
+    errors: list[str] = []
+    for engine in engines:
+        try:
+            return pd.read_parquet(path, engine=engine)
+        except ImportError as exc:
+            errors.append(f"{engine}: {exc}")
+        except Exception as exc:
+            errors.append(f"{engine}: {exc}")
+    raise RuntimeError(f"Failed to read parquet shard {path}; tried {engines} → {errors}")
 
 
 def save_joblib(path: Path, obj: Any) -> None:

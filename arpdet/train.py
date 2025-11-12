@@ -41,12 +41,37 @@ except AttributeError:
 
 
 def _read_parquet(path: str, columns: List[str]) -> pd.DataFrame:
-    """Helper that favours single-threaded parquet reads for small VMs."""
-    kwargs = {"columns": columns, "engine": "pyarrow"}
-    try:
-        return pd.read_parquet(path, use_threads=False, **kwargs)
-    except TypeError:
-        return pd.read_parquet(path, **kwargs)
+    """
+    Helper that favours fastparquet to avoid pyarrow triggering unsupported CPU instructions.
+
+    The parquet engine can be overridden via ARPDET_PARQUET_ENGINE in {"fastparquet","pyarrow","auto"}.
+    """
+    engine_pref = os.environ.get("ARPDET_PARQUET_ENGINE", "fastparquet").lower()
+    if engine_pref == "auto":
+        engine_order = ["fastparquet", "pyarrow"]
+    elif engine_pref in ("fastparquet", "pyarrow"):
+        engine_order = [engine_pref]
+    else:
+        engine_order = ["fastparquet"]
+
+    errors: List[str] = []
+    for engine in engine_order:
+        try:
+            if engine == "pyarrow":
+                return pd.read_parquet(path, columns=columns, engine="pyarrow", use_threads=False)
+            return pd.read_parquet(path, columns=columns, engine="fastparquet")
+        except ImportError as exc:
+            errors.append(f"{engine}: {exc}")
+            continue
+        except Exception as exc:
+            errors.append(f"{engine}: {exc}")
+            continue
+
+    hint = (
+        "Install fastparquet (pip install fastparquet) or set ARPDET_PARQUET_ENGINE=pyarrow "
+        "if your CPU supports the pyarrow wheels."
+    )
+    raise RuntimeError(f"Failed to read parquet shard {path}; errors={errors}. {hint}")
 
 
 class CachedDataset(Dataset):

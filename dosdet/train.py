@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import os
 
 # Constrain BLAS / Torch threads for 2 vCPU boxes before heavy imports
@@ -40,13 +41,47 @@ except AttributeError:
     pass
 
 
-def _read_parquet(path: str, columns: List[str]) -> pd.DataFrame:
-    """Helper that favours single-threaded parquet reads for small VMs."""
-    kwargs = {"columns": columns, "engine": "pyarrow"}
-    try:
-        return pd.read_parquet(path, use_threads=False, **kwargs)
-    except TypeError:
-        return pd.read_parquet(path, **kwargs)
+def _read_parquet(path: str, columns: List[str] | None = None) -> pd.DataFrame:
+    """
+    Helper that favours engines compatible with low-feature CPUs.
+    Defaults to fastparquet when available and falls back to pyarrow.
+    """
+    override = os.environ.get("DOSDET_PARQUET_ENGINE", "").strip().lower()
+    candidates = [override] if override else []
+    candidates.extend(["fastparquet", "pyarrow"])
+    tried = []
+    cols_kw = {"columns": columns} if columns is not None else {}
+    last_exc: Exception | None = None
+
+    for engine in candidates:
+        if not engine or engine in tried:
+            continue
+        tried.append(engine)
+        if engine == "fastparquet":
+            if importlib.util.find_spec("fastparquet") is None:
+                continue
+            try:
+                return pd.read_parquet(path, engine="fastparquet", **cols_kw)
+            except Exception as exc:  # pragma: no cover - fallback path
+                last_exc = exc
+                continue
+        elif engine == "pyarrow":
+            if importlib.util.find_spec("pyarrow") is None:
+                continue
+            kwargs = {"engine": "pyarrow", **cols_kw}
+            try:
+                return pd.read_parquet(path, use_threads=False, **kwargs)
+            except TypeError as exc:
+                if "use_threads" not in str(exc):
+                    last_exc = exc
+                    continue
+                return pd.read_parquet(path, **kwargs)
+            except Exception as exc:  # pragma: no cover - fallback path
+                last_exc = exc
+                continue
+
+    tried_str = ", ".join(tried) or "fastparquet, pyarrow"
+    raise RuntimeError(f"Unable to read parquet file {path} with engines: {tried_str}") from last_exc
 
 
 class CachedDataset(Dataset):

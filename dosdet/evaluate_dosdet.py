@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 
 import numpy as np
-import pandas as pd
 import torch
 import yaml
 from sklearn.metrics import accuracy_score, confusion_matrix, f1_score, precision_score, recall_score, roc_auc_score, classification_report
@@ -20,7 +19,7 @@ from torch.utils.data import DataLoader
 from features.feature_slimming import StaticSlimmer
 from features.scaler import RobustScaler
 from models.dws_cnn import FastDetector
-from train import CachedDataset, collate, load_manifest
+from train import CachedDataset, collate, load_manifest, _read_parquet
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_EVAL_DIR = ROOT / "eval"
@@ -41,7 +40,7 @@ def _test_paths(cfg: dict) -> List[str]:
     stats = []
     for rel in shard_rel:
         path = _resolve_path(rel)
-        pos = int(pd.read_parquet(path, columns=["y"])["y"].sum())
+        pos = int(_read_parquet(path, columns=["y"])["y"].sum())
         stats.append({"path": str(path), "pos": pos})
     stats.sort(key=lambda s: (-s["pos"], s["path"]))
 

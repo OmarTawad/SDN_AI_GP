@@ -1,0 +1,24 @@
+{
+  "accuracy": 1.0,
+  "precision": 0.0,
+  "recall": 0.0,
+  "f1": 0.0,
+  "threshold": 0.5,
+  "samples": 151320,
+  "positives": 0,
+  "roc_auc": null,
+  "split": "test",
+  "checkpoint": "/home/roots/SDN_AI_GP/ARP_LSTM/models/supervised.pt",
+  "files_evaluated": [
+    "attack.pcap",
+    "normal1.pcap",
+    "normal2.pcap",
+    "pure_attack.pcap",
+    "pure_attack2.pcap",
+    "synthetic_arp_spoof.pcap",
+    "synthetic_arp_spoof_extended.pcap"
+  ],
+  "num_sequences": 5044,
+  "elapsed_seconds": 14.816909313201904,
+  "device": "cpu"
+}

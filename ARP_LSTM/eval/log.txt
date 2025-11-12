@@ -1,0 +1,13 @@
+Split: test
+Checkpoint: /home/roots/SDN_AI_GP/ARP_LSTM/models/supervised.pt
+Files: attack.pcap, normal1.pcap, normal2.pcap, pure_attack.pcap, pure_attack2.pcap, synthetic_arp_spoof.pcap, synthetic_arp_spoof_extended.pcap
+
+Classification report:
+              precision    recall  f1-score   support
+
+      normal       1.00      1.00      1.00    151320
+      attack       0.00      0.00      0.00         0
+
+    accuracy                           1.00    151320
+   macro avg       0.50      0.50      0.50    151320
+weighted avg       1.00      1.00      1.00    151320

@@ -118,7 +118,7 @@ class FeaturePipeline:
                         "pcap","window_index","window_start","window_end","attack","family","family_index"
                     }]
 
-                save_dataframe(out_dir / f"{p.stem}.parquet", df)
+                save_dataframe(out_dir / f"{p.stem}.csv", df)
                 self.save_last_host_maps(p, out_dir)
                 frames_meta.append({
                     "pcap": p.name,

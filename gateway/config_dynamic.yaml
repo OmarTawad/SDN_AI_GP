@@ -1,0 +1,10 @@
+# Configuration used by gateway.dynamic_moe_adapter.DynamicMoEGateway
+
+checkpoint: gateway/unified_moe.pt
+gating_hidden: 128
+default_attack_threshold: 0.98
+attack_thresholds:
+  dos: 0.9
+  arp: 0.8
+  normal: 0.2
+device: cpu

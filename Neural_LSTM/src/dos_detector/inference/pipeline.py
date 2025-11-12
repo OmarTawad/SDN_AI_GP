@@ -18,7 +18,7 @@ from ..data.dataset import SequenceDataset, collate_fn
 from ..data.pcap_reader import PCAPMetadata
 from ..data.processor import FeaturePipeline
 from ..models.supervised import SequenceClassifier
-from ..utils.io import load_dataframe, load_joblib, load_json
+from ..utils.io import load_dataframe, load_joblib, load_json, resolve_processed_frame
 from ..utils.logging import configure_logging, get_logger
 from ..utils.seed import seed_everything
 from .postprocessing import DecisionGate
@@ -84,10 +84,21 @@ class InferencePipeline:
             }
         host_maps = host_maps or {"macs": {}, "ips": {}}
         features_supervised = frame.copy()
-        features_supervised[self.feature_columns] = self.scaler.transform(frame[self.feature_columns])
+        feature_block = frame[self.feature_columns].to_numpy(dtype=np.float32, copy=True)
+        scaled_block = self.scaler.transform(feature_block).astype(np.float32, copy=False)
+        features_supervised[self.feature_columns] = scaled_block
 
         sup_dataset = SequenceDataset([features_supervised], self.feature_columns, self.family_mapping, self.config.windowing)
-        sup_loader = DataLoader(sup_dataset, batch_size=1, shuffle=False, collate_fn=collate_fn, num_workers=2, pin_memory=True, prefetch_factor=4, persistent_workers=True)
+        sup_loader = DataLoader(
+            sup_dataset,
+            batch_size=1,
+            shuffle=False,
+            collate_fn=collate_fn,
+            num_workers=2,
+            pin_memory=(self.device.type == "cuda"),
+            prefetch_factor=4,
+            persistent_workers=True,
+        )
 
         window_store = self._run_supervised(frame, sup_loader)
         window_results = self._assemble_results(frame, window_store)
@@ -229,8 +240,9 @@ class InferencePipeline:
         processed_dir = getattr(self.config.paths, "processed_dir", None)
         if processed_dir is None:
             return None
-        feature_path = Path(processed_dir) / f"{path.stem}.parquet"
-        if not feature_path.exists():
+        try:
+            feature_path = resolve_processed_frame(processed_dir, path.name)
+        except FileNotFoundError:
             return None
         frame = load_dataframe(feature_path)
         host_maps = self.feature_pipeline.load_host_maps(path)

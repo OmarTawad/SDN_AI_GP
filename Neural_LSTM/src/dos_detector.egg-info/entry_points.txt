@@ -1,2 +1,0 @@
-[console_scripts]
-dos-detector = dos_detector.cli:app

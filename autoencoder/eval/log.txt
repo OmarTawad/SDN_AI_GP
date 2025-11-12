@@ -1,0 +1,20 @@
+Artifacts: /home/roots/SDN_AI_GP/autoencoder/data/artifacts
+Threshold: 0.08212879896163935
+
+Classification report:
+              precision    recall  f1-score   support
+
+      normal       0.06      0.76      0.11      5001
+     anomaly       0.97      0.37      0.53     95000
+
+    accuracy                           0.39    100001
+   macro avg       0.51      0.56      0.32    100001
+weighted avg       0.92      0.39      0.51    100001
+
+
+Reconstruction error stats:
+mean: 0.089467
+std: 0.073637
+median: 0.073136
+p95: 0.279220
+max: 0.816134

@@ -6,9 +6,9 @@ import importlib
 import importlib.util
 import json
 import sys
+from types import ModuleType
 from dataclasses import dataclass, field
 from pathlib import Path
-from types import ModuleType
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 try:  # pragma: no cover - optional dependency
@@ -45,6 +45,11 @@ def _extend_sys_path(*roots: Path) -> None:
 
 
 _extend_sys_path(AUTOENCODER_ROOT, DOSDET_ROOT, NEURAL_LSTM_ROOT, ARPDET_ROOT, ARP_LSTM_ROOT)
+# Ensure package-style absolute imports used inside submodules resolve correctly.
+for package_root in (NEURAL_LSTM_ROOT, ARP_LSTM_ROOT):
+    pkg_name = package_root.name
+    if package_root.exists() and pkg_name not in sys.modules:
+        sys.modules[pkg_name] = importlib.import_module(pkg_name)
 
 if yaml is None:
     raise ImportError("PyYAML is required to configure the Mixture-of-Experts model.")
@@ -227,17 +232,59 @@ def _infer_dotted_module(module_path: Path) -> Optional[str]:
     return ".".join(module_parts)
 
 
+def _load_package_from_path(package_name: str, package_path: Path) -> None:
+    """Load a package's __init__ from disk so relative imports work."""
+
+    init_path = package_path / "__init__.py"
+    if not init_path.exists():
+        pkg_module = ModuleType(package_name)
+        pkg_module.__path__ = [str(package_path)]
+        sys.modules[package_name] = pkg_module
+        return
+    spec = importlib.util.spec_from_file_location(
+        package_name,
+        init_path,
+        submodule_search_locations=[str(package_path)],
+    )
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Unable to load package '{package_name}' from {init_path}")
+    module = importlib.util.module_from_spec(spec)
+    module.__path__ = [str(package_path)]
+    sys.modules[package_name] = module
+    spec.loader.exec_module(module)  # type: ignore[attr-defined]
+
+
+def _ensure_package_hierarchy(dotted: str, module_path: Path) -> None:
+    parts = dotted.split(".")
+    if len(parts) <= 1:
+        return
+    current_path = module_path.parent
+    for depth in range(len(parts) - 1, 0, -1):
+        pkg_name = ".".join(parts[:depth])
+        if pkg_name in sys.modules:
+            current_path = current_path.parent
+            continue
+        _load_package_from_path(pkg_name, current_path)
+        current_path = current_path.parent
+
+
 def _import_from_path(module_path: Path, module_name: str) -> ModuleType:
     dotted = _infer_dotted_module(module_path)
     if dotted is not None:
         try:
             return importlib.import_module(dotted)
         except Exception:
+            # Fall back to manual loading; relative imports will be rehydrated below.
             pass
     spec = importlib.util.spec_from_file_location(module_name, module_path)
     if spec is None or spec.loader is None:
         raise ImportError(f"Unable to import module at {module_path}")
     module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    if dotted:
+        module.__package__ = dotted.rsplit(".", 1)[0] if "." in dotted else dotted
+        sys.modules[dotted] = module
+        _ensure_package_hierarchy(dotted, module_path)
     spec.loader.exec_module(module)  # type: ignore[attr-defined]
     return module
 

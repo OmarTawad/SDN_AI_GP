@@ -1,5 +1,6 @@
 numpy
 pandas
+fastparquet
 pyarrow
 scikit-learn
 tqdm

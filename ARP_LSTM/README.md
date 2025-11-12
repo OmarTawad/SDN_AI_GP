@@ -51,6 +51,18 @@ Batch mode is also available:
 python -m arp_detector.cli batch-infer "pcaps/*.pcap" --out-dir reports --config-path configs/config.yaml
 ```
 
+## Evaluation
+
+Evaluate existing checkpoints without retraining:
+```bash
+python3 evaluate_arp_lstm.py --split test --batch-size 64
+```
+Metrics, confusion matrices, and logs are written to `eval/`. If your CPU lacks the instruction set expected by `pyarrow`, force the safer engine and ensure `fastparquet` is installed:
+```bash
+pip install fastparquet
+export ARP_LSTM_PARQUET_ENGINE=fastparquet
+```
+
 ## Testing
 
 With the virtual environment active:
