@@ -82,6 +82,25 @@ def _compute_class_aggregation(
     return classes
 
 
+def _validate_inputs(
+    predictions: Sequence[int],
+    probabilities: Sequence[Sequence[float]],
+) -> None:
+    """Ensure prediction and probability sequences are well-formed."""
+
+    if len(predictions) != len(probabilities):
+        raise ValueError(
+            "Predictions and probability vectors must have the same length "
+            f"(got {len(predictions)} vs {len(probabilities)})."
+        )
+    expected = len(CLASS_LABELS)
+    for idx, vector in enumerate(probabilities):
+        if len(vector) != expected:
+            raise ValueError(
+                f"Probability vector at index {idx} has length {len(vector)}; expected {expected}."
+            )
+
+
 def decide_verdict(
     class_stats: Dict[str, ClassAggregation],
     attack_threshold: float,
@@ -174,6 +193,7 @@ def aggregate_predictions(
         AggregationSummary: Summary containing per-class stats and final verdict.
     """
 
+    _validate_inputs(predictions, probabilities)
     class_stats = _compute_class_aggregation(predictions, probabilities, high_conf_threshold)
     verdict = decide_verdict(
         class_stats=class_stats,

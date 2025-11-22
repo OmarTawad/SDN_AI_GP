@@ -2,9 +2,9 @@
 
 checkpoint: gateway/unified_moe.pt
 gating_hidden: 128
-default_attack_threshold: 0.98
+default_attack_threshold: 0.995
 attack_thresholds:
-  dos: 0.9
-  arp: 0.8
+  dos: 0.95
+  arp: 0.9
   normal: 0.2
 device: cpu

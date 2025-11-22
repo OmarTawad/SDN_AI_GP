@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Dict, Iterator, List, Optional, Sequence, Set, Tuple
 
 import torch
-from scapy.utils import PcapReader
 from torch import Tensor
 
 from gateway.data.datasets.assembly import assemble_window_features
@@ -34,6 +33,21 @@ from gateway.data.structures.windowing import SequenceState, StreamingWindowMana
 
 if TYPE_CHECKING:  # pragma: no cover
     from gateway.data.datasets.streaming_dataset import MoEDataset
+
+
+def _load_pcap_reader():
+    """Import Scapy's ``PcapReader`` lazily so unit tests or tooling that do not
+    require streaming can still import this module without Scapy installed.
+    """
+
+    try:
+        from scapy.utils import PcapReader  # type: ignore[import]
+    except Exception as exc:  # pragma: no cover - scapy missing in some envs
+        raise RuntimeError(
+            "Scapy is required to stream PCAP files. Install it with 'pip install scapy' "
+            "before invoking the streaming dataset."
+        ) from exc
+    return PcapReader
 
 
 def _fallback_arp_row(pkt) -> Dict[str, object]:
@@ -123,7 +137,8 @@ def stream_file(dataset: "MoEDataset", info: PcapInfo) -> Iterator[Tuple[Dict[st
             return flush_batch()
         return iter(())
 
-    with PcapReader(str(info.path)) as reader:
+    reader_cls = _load_pcap_reader()
+    with reader_cls(str(info.path)) as reader:
         for pkt in reader:
             if dataset.file_timeout is not None and (time.monotonic() - start_time) >= dataset.file_timeout:
                 drop_reason = f"time budget {dataset.file_timeout:.1f}s exceeded"

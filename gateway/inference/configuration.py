@@ -52,11 +52,16 @@ def parse_args(argv: Sequence[str] | None = None) -> InferenceArgs:
     parser.add_argument("--max-windows", type=int, default=0, help="Optional cap on processed windows.")
     parser.add_argument("--num-threads", type=int, default=1, help="Torch thread pool size.")
     parser.add_argument("--gating-hidden", type=int, default=None, help="Override gating hidden size.")
-    parser.add_argument("--attack-threshold", type=float, default=0.15, help="Attack fraction threshold.")
+    parser.add_argument(
+        "--attack-threshold",
+        type=float,
+        default=0.25,
+        help="Attack fraction threshold (higher values demand more consensus).",
+    )
     parser.add_argument(
         "--attack-prob-threshold",
         type=float,
-        default=0.30,
+        default=0.40,
         help="Attack probability threshold.",
     )
     parser.add_argument(
