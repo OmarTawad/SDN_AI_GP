@@ -14,7 +14,8 @@ from sklearn.metrics import (
 def _iso_to_epoch(s: str) -> float:
     if not s or (isinstance(s, float) and np.isnan(s)):
         return np.nan
-    return pd.to_datetime(s, utc=True).view("int64") / 1e9
+    dt = pd.to_datetime(s, utc=True)
+    return dt.value / 1e9
 
 def file_metrics(json_paths: List[str], labels_csv: str) -> Dict:
     labs = pd.read_csv(labels_csv).fillna("")
@@ -26,6 +27,8 @@ def file_metrics(json_paths: List[str], labels_csv: str) -> Dict:
     for j in json_paths:
         with open(j, "r") as f:
             d = json.load(f)
+        if "file" not in d:
+            continue
         base = os.path.basename(d["file"])
         if base not in truth:
             continue
@@ -53,7 +56,7 @@ def window_metrics(csv_paths: List[str], labels_csv: str) -> Dict:
 
         df = pd.read_csv(c)
         # derive window start epoch from ISO
-        ts_start = pd.to_datetime(df["t_start"], utc=True).view("int64")/1e9
+        ts_start = pd.to_datetime(df["t_start"], utc=True, format="mixed", errors="coerce").astype("int64")/1e9
         if is_attack == 0 or np.isnan(atk_ts):
             gt = np.zeros(len(df), dtype=int)
         else:
@@ -85,6 +88,8 @@ def detection_latency(json_paths: List[str], labels_csv: str) -> Dict:
     for j in json_paths:
         with open(j, "r") as f:
             d = json.load(f)
+        if "file" not in d:
+            continue
         base = os.path.basename(d["file"])
         row = labs[labs["base"] == base]
         if row.empty or int(row["attack"].values[0]) == 0:
