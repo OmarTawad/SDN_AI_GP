@@ -1,5 +1,16 @@
 # ARP Spoof Detector Pipeline
 
+## Unified install
+
+Install the shared dependencies for every detector from the repo root `pyproject.toml`:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -U pip
+pip install -e .[all]
+```
+
 Modernised training/inference stack for the simulated SDN IoT ARP-spoofing detection project. The repository focuses on a single workflow: preprocess raw pcaps into parquet shards, train the CNN detector, and run calibrated inference with conflict-aware post-processing.
 
 ## Project layout
@@ -15,7 +26,7 @@ infer.py            # calibrated inference over pcaps
 explain.py          # permutation importances + attention plots
 Makefile            # convenience targets (preprocess/train/infer/eval)
 config.yaml         # single source of truth for paths + hyper-params
-requirements.txt    # python dependencies
+requirements.txt    # legacy dependencies (use repo-root pyproject.toml)
 ```
 
 Generated artefacts live under `artifacts/`, cached parquet shards under `cache/`, and inference reports under `reports/` (all ignored by git).
@@ -28,7 +39,7 @@ Generated artefacts live under `artifacts/`, cached parquet shards under `cache/
    python -m venv .venv
    source .venv/bin/activate
    pip install -U pip
-   pip install -r requirements.txt
+   pip install -e ..[all]
    ```
    Install a CUDA-enabled PyTorch build if you plan to train on GPU (see https://pytorch.org/get-started/locally/).
 
@@ -96,4 +107,4 @@ Unit tests live under `tests/`. Run them with:
 ```bash
 pytest
 ```
-(install `pytest` via `pip install -r requirements.txt`).
+`pytest` is included in the unified install (`pip install -e ..[all]`).

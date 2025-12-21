@@ -1,0 +1,71 @@
+seed: 1337
+
+paths:
+  cache_dir: cache
+  artifacts_dir: artifacts
+  reports_dir: reports
+
+data:
+  top_k_udp_ports: [1900, 53, 123, 80, 443]
+
+windowing:
+  window_sec: 1.0
+  stride_sec: 0.5
+  micro_bins: 8
+
+features:
+  ssdp_multicast_ipv4: "239.255.255.250"
+  ssdp_multicast_ipv6: "ff02::c"
+  static_max_dim: 128
+  pca_whiten: false
+
+split:
+  train_val_test: [0.7, 0.15, 0.15]
+  thin_val_fraction: 0.5
+
+sampling:
+  normal_subsample_rate: 0.2
+  hard_negative_mining:
+    enabled: true
+    refresh_every_epochs: 2
+    top_k_per_file: 50
+
+training:
+  epochs: 10
+  batch_size: 128           # tuned for 2 vCPU / low-memory boxes
+  grad_accum_steps: 1
+  channels: [64, 96]
+  kernel_size: 5
+  dropout: 0.1
+  mlp_hidden: [256, 64]
+  lr: 0.002
+  weight_decay: 0.001
+  early_stop_patience: 4
+  class_weight_pos: 3.0
+  cosine_lr: true
+  int8_quantized: true     # enforced CUDA int8 fake-quant pipeline (no CPU fallback)
+  dataloader_workers: 0    # single-process loading keeps 2 vCPU machines stable
+  pinned_memory: false
+  cudnn_benchmark: true
+  grad_clip: 0.0
+
+decision:
+  tau_high: 0.7
+  tau_low: 0.55
+  min_attack_windows: 3
+  consecutive_required: 2
+  cooldown_windows: 1
+  enable_gate: true
+  warmup_windows: 60
+  abs_pkts_per_s_cap: 1500.0
+  burstiness_multiple: 3.0
+  syn_completion_max: 0.1
+  high_confidence_override: false
+  high_conf_tau: 0.93
+  high_conf_windows: 3
+  min_pkts_per_s_for_override: 3.0
+
+preprocess:
+  shard_max_mb: 64
+  pcaps_glob: "samples/*.pcap"
+  labels_csv: "labels/labels.csv"

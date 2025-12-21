@@ -1,5 +1,16 @@
 # PCAP DoS Detector
 
+## Unified install
+
+Install the shared dependencies for every detector from the repo root `pyproject.toml`:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -U pip
+pip install -e .[all]
+```
+
 This repository provides a production-ready pipeline for detecting distributed denial-of-service (DoS) activity in packet capture (PCAP) files. The detector focuses on sequence models (BiLSTM/GRU) and a sequence autoencoder to achieve high recall on known DoS behaviors (SSDP, TCP SYN, ICMP, UDP, HTTP floods) while aggressively controlling false positives on benign captures.
 
 ## Highlights
@@ -32,7 +43,7 @@ This repository provides a production-ready pipeline for detecting distributed d
    ```bash
    python -m venv .venv
    source .venv/bin/activate
-   pip install .[dev]
+   pip install .[all]
    ```
 
 2. **Extract features** from PCAPs (labels optional):
@@ -85,6 +96,10 @@ The command prints a ranked table of actors, saves CSV/JSON summaries under `res
 ## Configuration
 
 All tunable parameters (window size, hop, feature toggles, model dimensions, training hyperparameters, gating thresholds) live in `configs/config.yaml`. Edit the YAML or supply overrides via environment variables to adapt to new datasets or operational requirements.
+
+## Dynamic SDN note
+
+The unified install intentionally excludes the dynamic SDN/Mininet/Ryu tooling. Install those separately if you need the live SDN harness.
 
 ## Tests
 

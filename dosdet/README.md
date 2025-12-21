@@ -15,7 +15,7 @@ infer.py            # calibrated inference over pcaps
 explain.py          # permutation importances + attention plots
 Makefile            # convenience targets (preprocess/train/infer/eval)
 config.yaml         # single source of truth for paths + hyper-params
-requirements.txt    # python dependencies
+requirements.txt    # legacy dependencies (use repo-root pyproject.toml)
 ```
 
 Generated artefacts live under `artifacts/`, cached parquet shards under `cache/`, and inference reports under `reports/` (all ignored by git).
@@ -28,7 +28,7 @@ Generated artefacts live under `artifacts/`, cached parquet shards under `cache/
    python -m venv .venv
    source .venv/bin/activate
    pip install -U pip
-   pip install -r requirements.txt
+   pip install -e ..[all]
    ```
    Install a CUDA-enabled PyTorch build if you plan to train on GPU (see https://pytorch.org/get-started/locally/).
 
@@ -96,4 +96,4 @@ Unit tests live under `tests/`. Run them with:
 ```bash
 pytest
 ```
-(install `pytest` via `pip install -r requirements.txt`).
+`pytest` is included in the unified install (`pip install -e ..[all]`).

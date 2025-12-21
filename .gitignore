@@ -1,16 +1,41 @@
-*.venv
+# ---- big generated artifacts ----
+**/cache/
+**/cache/**
+
+# reports / exports (often huge)
+**/reports/
+**/reports/**
+**/reports_home/
+**/reports_home/**
+
+# pcaps / datasets / samples
 *.pcap
+*.pcapng
+**/samples/
+**/samples/**
+
+# model checkpoints
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.h5
+
+# python junk
 __pycache__/
-*.py[cod]
+*.pyc
+.venv/
 
+# processed datasets / generated windows/hosts files
+**/data/processed/**
+**/data/processed/**
 
+# evaluation outputs
+**/eval/**
+**/eval/**
 
-
-
-*.pcap
-!pcaps/*.pcap
-
-
-
-
-*samples
+# fp16/int8 output folders if they contain generated artifacts
+**/reports_fp16/**
+**/reports_fp16/**
+**/reports_int8/**
+**/reports_int8/**

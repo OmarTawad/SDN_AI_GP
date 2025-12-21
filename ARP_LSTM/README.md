@@ -11,7 +11,7 @@ This project provides an end-to-end pipeline for spotting ARP spoofing activity 
    ```
 2. Install the package in editable mode so the CLI is available:
    ```bash
-   pip install -e ..
+   pip install -e ..[all]
    ```
    The root `pyproject.toml` exposes the `arp-detector` console entrypoint used below; you can also invoke the CLI with `python -m arp_detector.cli`.
 
@@ -57,9 +57,8 @@ Evaluate existing checkpoints without retraining:
 ```bash
 python3 evaluate_arp_lstm.py --split test --batch-size 64
 ```
-Metrics, confusion matrices, and logs are written to `eval/`. If your CPU lacks the instruction set expected by `pyarrow`, force the safer engine and ensure `fastparquet` is installed:
+Metrics, confusion matrices, and logs are written to `eval/`. If your CPU lacks the instruction set expected by `pyarrow`, force the safer engine and ensure `fastparquet` is installed (included in the unified install):
 ```bash
-pip install fastparquet
 export ARP_LSTM_PARQUET_ENGINE=fastparquet
 ```
 

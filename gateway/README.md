@@ -1,5 +1,16 @@
 # Gateway Mixture-of-Experts
 
+## Unified install
+
+Install the shared dependencies for every detector from the repo root `pyproject.toml`:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -U pip
+pip install -e .[all]
+```
+
 This directory hosts the MoE gate that fuses the existing detectors in the SDN/IoT stack.
 
 - **Autoencoder**: `autoencoder/data/artifacts/model.pt`

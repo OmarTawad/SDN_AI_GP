@@ -1,5 +1,18 @@
 # Dynamic Mininet + Ryu + MoE Pipeline
 
+## Unified install
+
+Install the shared dependencies for every detector from the repo root `pyproject.toml`:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -U pip
+pip install -e .[all]
+```
+
+Note: the unified install intentionally excludes Mininet/Ryu and other SDN tooling. Install those separately as outlined below.
+
 This repository now ships with a live SDN experiment harness that stitches together:
 
 - A Mininet topology that emulates the IoT devices listed in the research dataset.

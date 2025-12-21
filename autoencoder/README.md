@@ -15,10 +15,7 @@ This project provides a production-ready pipeline for detecting anomalies in net
 python3 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
-pip install -e .
-# Optional extras
-pip install -e .[tests]
-pip install -e .[plots]
+pip install -e ..[all]
 ```
 
 ## Quickstart
@@ -79,7 +76,7 @@ The paired CSV contains full per-window scores, thresholds, and anomaly flags.
 To compute accuracy/precision/recall/F1/ROC-AUC against a labelled Parquet split, run the standalone evaluator:
 
 ```bash
-pip install duckdb  # needed for Parquet streaming on CPUs without AVX512
+pip install duckdb  # needed for Parquet streaming on CPUs without AVX512 (included in the unified install)
 python evaluate_autoencoder.py \
   --config config.yaml \
   --windows data/windows/mixed_eval.parquet \

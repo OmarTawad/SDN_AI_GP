@@ -1,0 +1,2 @@
+[console_scripts]
+arp-detector = arp_detector.cli:app
