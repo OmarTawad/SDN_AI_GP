@@ -40,11 +40,6 @@ labels:
   - udp
   - http
   - other
-quantization:
-  enabled: false
-  mode: dynamic
-  backend: fbgemm
-  checkpoint_path: ../models/supervised_int8_dynamic.pt
 data:
   train_files: []
   val_files: []

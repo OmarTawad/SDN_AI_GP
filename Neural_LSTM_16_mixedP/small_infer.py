@@ -43,7 +43,6 @@ from dos_detector.utils import (
     resolve_torch_dtype,
     safe_cast_tensor,
 )
-from dos_detector.utils.quantization import apply_dynamic_quantization, set_quantized_engine, unpack_checkpoint
 from dos_detector.utils.io import load_joblib, load_json
 
 DEFAULT_CONFIG = resolve_project_root() / "configs" / "config.yaml"
@@ -58,35 +57,16 @@ def _load_model(
     feature_columns: Sequence[str],
     device: torch.device,
     torch_dtype: torch.dtype,
-    quantized: bool,
 ) -> SequenceClassifier:
     model = SequenceClassifier(
         input_size=len(feature_columns),
         num_attack_types=len(cfg.labels.family_mapping),
         config=cfg.model.supervised,
-    )
-    if not quantized:
-        model = model.to(device=device, dtype=torch_dtype or DEFAULT_TORCH_DTYPE)
-        state = torch.load(cfg.paths.supervised_model_path, map_location=device)
-        state_dict, _ = unpack_checkpoint(state)
-        model.load_state_dict(state_dict)
-        model.eval()
-        return model
-
-    set_quantized_engine(getattr(cfg.quantization, "backend", None))
-    model = model.to(device="cpu", dtype=torch.float32)
-    quant_path = getattr(cfg.quantization, "checkpoint_path", None)
-    checkpoint = quant_path if quant_path and Path(quant_path).is_file() else cfg.paths.supervised_model_path
-    state = torch.load(checkpoint, map_location="cpu")
-    state_dict, is_quantized = unpack_checkpoint(state)
-    if is_quantized:
-        quantized_model = apply_dynamic_quantization(model)
-        quantized_model.load_state_dict(state_dict)
-    else:
-        model.load_state_dict(state_dict)
-        quantized_model = apply_dynamic_quantization(model)
-    quantized_model.eval()
-    return quantized_model
+    ).to(device=device, dtype=torch_dtype or DEFAULT_TORCH_DTYPE)
+    state = torch.load(cfg.paths.supervised_model_path, map_location=device)
+    model.load_state_dict(state)
+    model.eval()
+    return model
 
 
 def _first_window(pcap_path: Path, window_sec: float) -> Window:
@@ -178,14 +158,13 @@ def main() -> None:
     if not feature_columns:
         raise ValueError(f"Manifest missing feature_columns → {cfg.paths.manifest_path}")
 
-    quantized = bool(getattr(cfg, "quantization", None) and cfg.quantization.enabled)
-    device = resolve_device(prefer_cuda=not quantized)
+    device = resolve_device()
     if device.type == "cpu":
         configure_cpu_environment(threads=2, interop_threads=1)
     scaler = load_joblib(cfg.paths.scaler_path)
     torch_dtype, numpy_dtype = resolve_precision_mode(getattr(cfg.training.supervised, "precision_mode", None))
     torch_dtype = resolve_torch_dtype(device, torch_dtype)
-    model = _load_model(cfg, feature_columns, device, torch_dtype, quantized)
+    model = _load_model(cfg, feature_columns, device, torch_dtype)
 
     start = time.perf_counter()
     result = infer_single_window(args.pcap, cfg, feature_columns, model, scaler, device, torch_dtype, numpy_dtype)

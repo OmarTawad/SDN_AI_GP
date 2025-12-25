@@ -24,16 +24,6 @@ class PathsConfig:
 
 
 @dataclass
-class QuantizationConfig:
-    """Quantization configuration for CPU inference."""
-
-    enabled: bool = False
-    mode: str = "dynamic"
-    backend: str | None = None
-    checkpoint_path: Optional[Path] = None
-
-
-@dataclass
 class WindowingConfig:
     """Window and sequence configuration."""
 
@@ -153,7 +143,6 @@ class Config:
     windowing: WindowingConfig
     feature: FeatureConfig
     labels: LabelsConfig
-    quantization: QuantizationConfig
     data: DataConfig
     training: "TrainingConfig"
     model: "ModelConfig"
@@ -196,8 +185,6 @@ def resolve_paths(config: Config, root: Optional[Path] = None) -> Config:
     config.paths.supervised_model_path = expand_path(base, config.paths.supervised_model_path)
     config.paths.manifest_path = expand_path(base, config.paths.manifest_path)
     config.paths.metrics_path = expand_path(base, config.paths.metrics_path)
-    if config.quantization.checkpoint_path is not None:
-        config.quantization.checkpoint_path = expand_path(base, config.quantization.checkpoint_path)
     if config.labels.intervals_csv is not None:
         config.labels.intervals_csv = expand_path(base, config.labels.intervals_csv)
     return config

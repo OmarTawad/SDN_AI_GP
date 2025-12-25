@@ -1,0 +1,10 @@
+file,attack_label,attack_start_iso,family
+samples/normal1.pcap,0,,
+samples/normal2.pcap,0,,
+samples/ssdp_flood1.pcap,1,2018-10-21T20:17:32Z,SSDP
+samples/ssdp_flood2.pcap,1,2018-10-21T20:29:32Z,SSDP
+samples/ssdp_flood3.pcap,1,2018-10-21T22:01:32Z,SSDP
+samples/ssdp_flood4.pcap,1,2018-10-21T22:01:32Z,SSDP
+samples/ssdp_flood5.pcap,1,2018-10-21T23:54:02Z,SSDP
+samples/ssdp_flood6.pcap,1,2018-10-21T23:54:32Z,SSDP
+samples/mixed1.pcap,1,2018-10-19T17:00:34Z,SSDP

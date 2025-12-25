@@ -73,20 +73,10 @@ def infer(
     pcap: Path = typer.Argument(..., help="Path to PCAP file"),
     out: Path = typer.Option(Path("reports/prediction.json"), help="Output JSON path"),
     config_path: Path = typer.Option(Path("configs/config.yaml"), help="Configuration path"),
-    quantized: Optional[bool] = typer.Option(
-        None,
-        "--quantized/--no-quantized",
-        help="Override config quantization flag for int8 inference",
-    ),
-    quantized_checkpoint: Optional[Path] = typer.Option(None, help="Optional int8 checkpoint override"),
 ) -> None:
     """Run inference on a single PCAP."""
 
     config = load_config(config_path)
-    if quantized is not None:
-        config.quantization.enabled = quantized
-    if quantized_checkpoint is not None:
-        config.quantization.checkpoint_path = quantized_checkpoint
     pipeline = InferencePipeline(config)
     report = pipeline.infer(pcap)
     ensure_dir(out.parent)
@@ -100,20 +90,10 @@ def batch_infer(
     pcaps: str = typer.Argument(..., help="Glob pattern for PCAP files"),
     out_dir: Path = typer.Option(Path("reports"), help="Directory for JSON reports"),
     config_path: Path = typer.Option(Path("configs/config.yaml"), help="Configuration path"),
-    quantized: Optional[bool] = typer.Option(
-        None,
-        "--quantized/--no-quantized",
-        help="Override config quantization flag for int8 inference",
-    ),
-    quantized_checkpoint: Optional[Path] = typer.Option(None, help="Optional int8 checkpoint override"),
 ) -> None:
     """Run inference on multiple PCAPs."""
 
     config = load_config(config_path)
-    if quantized is not None:
-        config.quantization.enabled = quantized
-    if quantized_checkpoint is not None:
-        config.quantization.checkpoint_path = quantized_checkpoint
     pipeline = InferencePipeline(config)
     ensure_dir(out_dir)
     for path in _resolve_pcaps(pcaps):

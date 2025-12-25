@@ -7,7 +7,7 @@ from .types import (
     SupervisedTrainingConfig, TrainingConfig,
     SupervisedModelConfig, ModelConfig,
     PlausibilityConfig, PostProcessingConfig,
-    ExplainabilityConfig, LiveConfig, QuantizationConfig, Config, resolve_paths
+    ExplainabilityConfig, LiveConfig, Config, resolve_paths
 )
 
 def _to_path(p) -> Path:
@@ -82,23 +82,12 @@ def load_config(path: Path) -> Config:
     explainability = ExplainabilityConfig(**raw["explainability"])
     live = LiveConfig(**raw["live"])
 
-    # Quantization (optional)
-    q = raw.get("quantization", {}) or {}
-    checkpoint = q.get("checkpoint_path")
-    quantization = QuantizationConfig(
-        enabled=bool(q.get("enabled", False)),
-        mode=str(q.get("mode", "dynamic")),
-        backend=q.get("backend"),
-        checkpoint_path=_to_path(checkpoint) if checkpoint else None,
-    )
-
     cfg = Config(
         seed=raw["seed"],
         paths=paths,
         windowing=windowing,
         feature=feature,
         labels=labels,
-        quantization=quantization,
         data=data,
         training=training,
         model=model,

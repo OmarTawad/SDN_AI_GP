@@ -36,7 +36,6 @@ from dos_detector.utils import (
     resolve_torch_dtype,
     safe_cast_tensor,
 )
-from dos_detector.utils.quantization import apply_dynamic_quantization, set_quantized_engine, unpack_checkpoint
 from dos_detector.utils.io import ensure_dir, load_joblib, load_json, save_compressed_array
 from dos_detector.utils.logging import configure_logging, get_logger
 
@@ -129,33 +128,20 @@ def _load_model(
     feature_columns: Sequence[str],
     device: torch.device,
     torch_dtype: torch.dtype,
-    quantized: bool,
-    quantized_checkpoint: Path | None,
-    quant_backend: str | None,
 ) -> SequenceClassifier:
     model = SequenceClassifier(
         input_size=len(feature_columns),
         num_attack_types=len(config.labels.family_mapping),
         config=config.model.supervised,
     )
-    if not quantized:
-        state = torch.load(checkpoint, map_location=device)
-        state_dict, _ = unpack_checkpoint(state)
-        model.load_state_dict(state_dict)
-        return model.to(device=device, dtype=torch_dtype or DEFAULT_TORCH_DTYPE).eval()
-
-    set_quantized_engine(quant_backend)
-    model = model.to(device="cpu", dtype=torch.float32)
-    quant_ckpt = quantized_checkpoint if quantized_checkpoint and quantized_checkpoint.is_file() else checkpoint
-    state = torch.load(quant_ckpt, map_location="cpu")
-    state_dict, is_quantized = unpack_checkpoint(state)
-    if is_quantized:
-        quantized_model = apply_dynamic_quantization(model)
-        quantized_model.load_state_dict(state_dict)
-    else:
-        model.load_state_dict(state_dict)
-        quantized_model = apply_dynamic_quantization(model)
-    return quantized_model.eval()
+    state = torch.load(checkpoint, map_location=device)
+    if isinstance(state, dict):
+        if "state_dict" in state:
+            state = state["state_dict"]
+        elif "model" in state:
+            state = state["model"]
+    model.load_state_dict(state)
+    return model.to(device=device, dtype=torch_dtype or DEFAULT_TORCH_DTYPE).eval()
 
 
 def _evaluate(
@@ -216,23 +202,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate the Neural LSTM DoS detector.")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG, help="Path to configs/config.yaml")
     parser.add_argument("--checkpoint", type=str, default=None, help="Optional checkpoint override")
-    parser.add_argument("--quantized", action="store_true", help="Enable dynamic int8 quantization for evaluation")
-    parser.add_argument(
-        "--quantized-checkpoint",
-        type=Path,
-        default=None,
-        help="Optional int8 checkpoint to load (falls back to --checkpoint if omitted)",
-    )
-    parser.add_argument("--quant-backend", type=str, default=None, help="Quantized backend engine (fbgemm or qnnpack)")
     parser.add_argument("--eval-dir", type=Path, default=DEFAULT_EVAL_DIR, help="Output directory for metrics/logs")
     parser.add_argument("--batch-size", type=int, default=32, help="Evaluation batch size")
     parser.add_argument("--threshold", type=float, default=0.5, help="Window-level decision threshold")
     parser.add_argument("--split", type=str, default="test", choices=["test", "val", "train"], help="Dataset split to evaluate")
     args = parser.parse_args()
-
-    if args.quantized:
-        device = torch.device("cpu")
-        configure_cpu_environment(threads=2, interop_threads=2)
 
     ensure_dir(args.eval_dir)
     configure_logging(log_file=args.eval_dir / "log.txt")
@@ -253,16 +227,7 @@ def main() -> None:
     checkpoint = _find_checkpoint(config, args.checkpoint)
     torch_dtype, _ = resolve_precision_mode(getattr(config.training.supervised, "precision_mode", None))
     torch_dtype = resolve_torch_dtype(device, torch_dtype)
-    model = _load_model(
-        config,
-        checkpoint,
-        feature_columns,
-        device,
-        torch_dtype,
-        quantized=args.quantized,
-        quantized_checkpoint=args.quantized_checkpoint,
-        quant_backend=args.quant_backend,
-    )
+    model = _load_model(config, checkpoint, feature_columns, device, torch_dtype)
 
     process = psutil.Process()
     process.cpu_percent(interval=None)

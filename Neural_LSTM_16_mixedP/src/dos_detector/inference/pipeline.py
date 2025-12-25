@@ -27,7 +27,6 @@ from ..utils import (
     safe_cast_tensor,
     sanitize_numpy,
 )
-from ..utils.quantization import apply_dynamic_quantization, set_quantized_engine, unpack_checkpoint
 from ..utils.io import load_dataframe, load_joblib, load_json, resolve_processed_frame
 from ..utils.logging import configure_logging, get_logger
 from ..utils.seed import seed_everything
@@ -45,9 +44,6 @@ class InferencePipeline:
         seed_everything(config.seed, deterministic=False)
         self.logger = get_logger(__name__)
         self.device = resolve_device()
-        self.quantization_enabled = bool(getattr(config, "quantization", None) and config.quantization.enabled)
-        if self.quantization_enabled:
-            self.device = torch.device("cpu")
         self.manifest = load_json(config.paths.manifest_path)
         self.feature_columns: Sequence[str] = self.manifest.get("feature_columns", [])
         if not self.feature_columns:
@@ -57,8 +53,6 @@ class InferencePipeline:
             getattr(self.config.training.supervised, "precision_mode", None)
         )
         self.torch_dtype = resolve_torch_dtype(self.device, self.torch_dtype)
-        if self.quantization_enabled:
-            set_quantized_engine(getattr(self.config.quantization, "backend", None))
         self.supervised_model = self._load_supervised_model()
         self.scaler = load_joblib(config.paths.scaler_path)
         self.gate = DecisionGate(config.postprocessing)
@@ -69,30 +63,11 @@ class InferencePipeline:
             input_size=len(self.feature_columns),
             num_attack_types=len(self.family_mapping),
             config=self.config.model.supervised,
-        )
-        if not self.quantization_enabled:
-            model = model.to(device=self.device, dtype=self.torch_dtype or DEFAULT_TORCH_DTYPE)
-            state = torch.load(self.config.paths.supervised_model_path, map_location=self.device)
-            state_dict, _ = unpack_checkpoint(state)
-            model.load_state_dict(state_dict)
-            model.eval()
-            return model
-
-        model = model.to(device="cpu", dtype=torch.float32)
-        quant_path = getattr(self.config.quantization, "checkpoint_path", None)
-        checkpoint = quant_path if (quant_path and Path(quant_path).is_file()) else self.config.paths.supervised_model_path
-        if quant_path and not Path(quant_path).is_file():
-            self.logger.warning("quantized_checkpoint_missing", path=str(quant_path))
-        state = torch.load(checkpoint, map_location="cpu")
-        state_dict, is_quantized = unpack_checkpoint(state)
-        if is_quantized:
-            quantized_model = apply_dynamic_quantization(model)
-            quantized_model.load_state_dict(state_dict)
-        else:
-            model.load_state_dict(state_dict)
-            quantized_model = apply_dynamic_quantization(model)
-        quantized_model.eval()
-        return quantized_model
+        ).to(device=self.device, dtype=self.torch_dtype or DEFAULT_TORCH_DTYPE)
+        state = torch.load(self.config.paths.supervised_model_path, map_location=self.device)
+        model.load_state_dict(state)
+        model.eval()
+        return model
 
     def infer(self, path: Path) -> Dict[str, object]:
         cached = self._load_cached_features(path)

@@ -11,9 +11,9 @@ paths:
 windowing:
   window_size: 1.0
   hop_size: 0.5
-  sequence_length: 30
+  sequence_length: 60
   sequence_stride: 30
-  max_windows: 50000
+  max_windows: null
 feature:
   micro_bins: 8
   top_udp_ports:
@@ -40,11 +40,6 @@ labels:
   - udp
   - http
   - other
-quantization:
-  enabled: false
-  mode: dynamic
-  backend: fbgemm
-  checkpoint_path: ../models/supervised_int8_dynamic.pt
 data:
   train_files: []
   val_files: []
@@ -75,10 +70,10 @@ model:
     attention: true
     attention_heads: 4
 postprocessing:
-  tau_window: 0.2
-  tau_file: 0.9
+  tau_window: 0.6
+  tau_file: 0.5
   consecutive_required: 2
-  min_attack_windows: 1
+  min_attack_windows: 3
   cooldown_windows: 1
   smoothing: 0.1
   plausibility:
