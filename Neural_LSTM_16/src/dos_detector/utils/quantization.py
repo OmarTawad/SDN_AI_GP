@@ -4,11 +4,28 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Mapping, Tuple
+import warnings
 
 import torch
 from torch import nn
+from torch.ao.quantization.quantization_mappings import get_default_dynamic_quant_module_mappings
 
 SUPPORTED_ENGINES = {"fbgemm", "qnnpack"}
+
+
+class _LinearDynamicNoReduceRange(torch.ao.nn.quantized.dynamic.Linear):
+    """Dynamic quantized Linear without reduce_range to silence qnnpack warnings."""
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:  # type: ignore[override]
+        if self._packed_params.dtype == torch.qint8:
+            y = torch.ops.quantized.linear_dynamic(
+                x, self._packed_params._packed_params, reduce_range=False
+            )
+        elif self._packed_params.dtype == torch.float16:
+            y = torch.ops.quantized.linear_dynamic_fp16(x, self._packed_params._packed_params)
+        else:
+            raise RuntimeError("Unsupported dtype on dynamic quantized linear!")
+        return y.to(x.dtype)
 
 
 def set_quantized_engine(backend: str | None) -> str:
@@ -17,8 +34,17 @@ def set_quantized_engine(backend: str | None) -> str:
     if not backend:
         return torch.backends.quantized.engine
     normalized = str(backend).lower()
-    if normalized not in SUPPORTED_ENGINES:
-        raise ValueError(f"Unsupported quantized engine '{backend}'. Use one of {sorted(SUPPORTED_ENGINES)}.")
+    supported = set(torch.backends.quantized.supported_engines or [])
+    if normalized not in supported:
+        fallback = "qnnpack" if "qnnpack" in supported else (next(iter(supported), None))
+        if fallback is None:
+            raise RuntimeError("No quantized engine is available in this PyTorch build.")
+        warnings.warn(
+            f"Quantized engine '{backend}' is not supported; falling back to '{fallback}'.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        normalized = fallback
     torch.backends.quantized.engine = normalized
     return normalized
 
@@ -53,7 +79,14 @@ def apply_dynamic_quantization(model: nn.Module, dtype: torch.dtype = torch.qint
     """Apply dynamic int8 quantization to LSTM/Linear layers."""
 
     model.eval()
-    return torch.quantization.quantize_dynamic(model, {nn.LSTM, nn.Linear}, dtype=dtype)
+    mapping = None
+    engine = str(torch.backends.quantized.engine).lower()
+    if engine == "qnnpack":
+        mapping = dict(get_default_dynamic_quant_module_mappings())
+        mapping[nn.Linear] = _LinearDynamicNoReduceRange
+        if hasattr(nn, "NonDynamicallyQuantizableLinear"):
+            mapping[nn.NonDynamicallyQuantizableLinear] = _LinearDynamicNoReduceRange
+    return torch.quantization.quantize_dynamic(model, {nn.LSTM, nn.Linear}, dtype=dtype, mapping=mapping)
 
 
 def normalize_checkpoint_path(path: Path | None) -> Path | None:

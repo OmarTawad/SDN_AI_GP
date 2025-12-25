@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from ..utils.progress import progress
 
+import os
 from collections import defaultdict
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
@@ -21,6 +22,7 @@ from ..models.supervised import SequenceClassifier
 from ..utils import (
     DEFAULT_NUMPY_DTYPE,
     DEFAULT_TORCH_DTYPE,
+    configure_cpu_environment,
     resolve_device,
     resolve_precision_mode,
     resolve_torch_dtype,
@@ -48,6 +50,10 @@ class InferencePipeline:
         self.quantization_enabled = bool(getattr(config, "quantization", None) and config.quantization.enabled)
         if self.quantization_enabled:
             self.device = torch.device("cpu")
+        if self.device.type == "cpu":
+            threads = int(os.getenv("DOS_CPU_THREADS", "2"))
+            interop = int(os.getenv("DOS_CPU_INTEROP_THREADS", "1"))
+            configure_cpu_environment(threads=threads, interop_threads=interop)
         self.manifest = load_json(config.paths.manifest_path)
         self.feature_columns: Sequence[str] = self.manifest.get("feature_columns", [])
         if not self.feature_columns:
@@ -131,16 +137,22 @@ class InferencePipeline:
         features_supervised[self.feature_columns] = scaled_block
 
         sup_dataset = SequenceDataset([features_supervised], self.feature_columns, self.family_mapping, self.config.windowing)
-        sup_loader = DataLoader(
-            sup_dataset,
-            batch_size=1,
-            shuffle=False,
-            collate_fn=collate_fn,
-            num_workers=2,
-            pin_memory=(self.device.type == "cuda"),
-            prefetch_factor=4,
-            persistent_workers=True,
-        )
+        worker_override = os.getenv("DOS_INFER_WORKERS")
+        if worker_override is not None:
+            workers = max(0, int(worker_override))
+        else:
+            workers = 0 if self.device.type == "cpu" else 2
+        loader_kwargs = {
+            "batch_size": 1,
+            "shuffle": False,
+            "collate_fn": collate_fn,
+            "num_workers": workers,
+            "pin_memory": (self.device.type == "cuda"),
+            "persistent_workers": workers > 0,
+        }
+        if workers > 0:
+            loader_kwargs["prefetch_factor"] = max(1, int(os.getenv("DOS_INFER_PREFETCH", "2")))
+        sup_loader = DataLoader(sup_dataset, **loader_kwargs)
 
         window_store = self._run_supervised(frame, sup_loader)
         window_results = self._assemble_results(frame, window_store)
