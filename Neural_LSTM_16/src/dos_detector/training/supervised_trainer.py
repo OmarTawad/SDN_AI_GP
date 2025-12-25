@@ -60,6 +60,7 @@ CHECKPOINT_DIR = PROJECT_ROOT / "checkpoints"
 SCALER_CHUNK_SIZE = 50_000
 MAX_CHECKPOINTS = 3
 LOGIT_CLIP = 20.0
+LOSS_SCALE = 128.0
 
 
 class SupervisedTrainer:
@@ -89,6 +90,7 @@ class SupervisedTrainer:
         self.torch_dtype = resolve_torch_dtype(self.device, self.torch_dtype)
         self.use_amp = self.precision_mode == "autocast" and self.device.type == "cuda"
         self.grad_scaler = torch.cuda.amp.GradScaler(enabled=self.use_amp)
+        self.loss_scale = LOSS_SCALE if self.torch_dtype == torch.float16 and not self.use_amp else 1.0
 
     def _resolve_files(self, split: str) -> List[str]:
         entries = [entry["pcap"] for entry in self.manifest.get("frames", [])]
@@ -159,11 +161,13 @@ class SupervisedTrainer:
             num_attack_types=len(self.config.labels.family_mapping),
             config=self.config.model.supervised,
         ).to(device=self.device, dtype=self.torch_dtype or DEFAULT_TORCH_DTYPE)
-        optimizer = optim.AdamW(
-            model.parameters(),
-            lr=self.config.training.supervised.learning_rate,
-            weight_decay=self.config.training.supervised.weight_decay,
-        )
+        optimizer_kwargs = {
+            "lr": self.config.training.supervised.learning_rate,
+            "weight_decay": self.config.training.supervised.weight_decay,
+        }
+        if self.torch_dtype == torch.float16 and not self.use_amp:
+            optimizer_kwargs["eps"] = 1e-4
+        optimizer = optim.AdamW(model.parameters(), **optimizer_kwargs)
         pos_weight = torch.tensor(
             [self.config.training.supervised.bce_pos_weight],
             dtype=self.torch_dtype or DEFAULT_TORCH_DTYPE,
@@ -265,7 +269,12 @@ class SupervisedTrainer:
                 self.grad_scaler.step(optimizer)
                 self.grad_scaler.update()
             else:
-                loss.backward()
+                scaled_loss = loss * self.loss_scale
+                scaled_loss.backward()
+                if self.loss_scale != 1.0:
+                    for param in model.parameters():
+                        if param.grad is not None:
+                            param.grad.data.div_(self.loss_scale)
                 nn.utils.clip_grad_norm_(model.parameters(), self.config.training.supervised.grad_clip)
                 optimizer.step()
             total_loss += float(loss.detach().cpu())
@@ -289,6 +298,9 @@ class SupervisedTrainer:
                     break
                 features = batch["features"].to(self.device, dtype=self.torch_dtype or DEFAULT_TORCH_DTYPE, non_blocking=True)
                 binary_labels = batch["binary_labels"].to(self.device, dtype=self.torch_dtype or DEFAULT_TORCH_DTYPE, non_blocking=True)
+                mask = batch.get("mask")
+                if mask is not None:
+                    mask = mask.to(self.device, dtype=self.torch_dtype or DEFAULT_TORCH_DTYPE, non_blocking=True)
                 if not torch.isfinite(features).all():
                     self.logger.warning("non_finite_features_detected", step=step)
                     features = torch.nan_to_num(features, nan=0.0, posinf=0.0, neginf=0.0)
@@ -301,15 +313,22 @@ class SupervisedTrainer:
                     self.logger.warning("non_finite_probs_detected", step=step)
                     probs = np.nan_to_num(probs, nan=0.0, posinf=1.0, neginf=0.0)
                 labels = binary_labels.cpu().numpy()
+                mask_np = mask.cpu().numpy() if mask is not None else None
                 for i, meta in enumerate(batch["metadata"]):
                     pcap = meta["pcap"]
                     start_index = meta["start_index"]
                     end_index = meta["end_index"]
                     for offset, window_index in enumerate(range(start_index, end_index + 1)):
+                        if mask_np is not None and mask_np[i, offset] < 0.5:
+                            continue
                         key = (pcap, window_index)
                         window_scores[key].append(float(probs[i, offset]))
                         window_labels[key] = int(labels[i, offset])
-                    file_labels[pcap] = max(file_labels[pcap], int(labels[i].max()))
+                    if mask_np is not None:
+                        valid = labels[i][mask_np[i] > 0.5]
+                        file_labels[pcap] = max(file_labels[pcap], int(valid.max()) if valid.size else 0)
+                    else:
+                        file_labels[pcap] = max(file_labels[pcap], int(labels[i].max()))
         if not window_scores:
             metrics = {"val_auc_pr": 0.0, "val_auc_roc": 0.0}
             return metrics, confusion
