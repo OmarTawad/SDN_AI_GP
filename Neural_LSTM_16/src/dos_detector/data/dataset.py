@@ -106,12 +106,14 @@ class SequenceDataset(Dataset[Dict[str, torch.Tensor]]):
         features = safe_cast_tensor(sample.features, DEFAULT_TORCH_DTYPE)
         binary = safe_cast_tensor(sample.binary_labels, DEFAULT_TORCH_DTYPE)
         family = torch.tensor(sample.family_labels, dtype=torch.long)
+        mask = torch.ones(len(sample.binary_labels), dtype=DEFAULT_TORCH_DTYPE)
         return {
             "features": features,
             "binary_labels": binary,
             "family_labels": family,
-        "metadata": sample.metadata,
-    }
+            "mask": mask,
+            "metadata": sample.metadata,
+        }
 
 
 class StreamingSequenceDataset(IterableDataset[Dict[str, Any]]):
@@ -167,6 +169,7 @@ class StreamingSequenceDataset(IterableDataset[Dict[str, Any]]):
         buffer = pd.DataFrame(columns=self.required_columns)
         stride = max(1, self.windowing.sequence_stride)
         seq_len = self.windowing.sequence_length
+        emitted = False
         for chunk in stream_dataframe(path, columns=self.required_columns, chunk_size=self.chunk_size):
             if chunk.empty:
                 continue
@@ -203,12 +206,52 @@ class StreamingSequenceDataset(IterableDataset[Dict[str, Any]]):
                     "features": feature_block[start:end],
                     "binary_labels": binary_block[start:end],
                     "family_labels": family_block[start:end],
+                    "mask": np.ones(seq_len, dtype=DEFAULT_NUMPY_DTYPE),
                     "metadata": metadata,
                 }
+                emitted = True
                 start += stride
             buffer = chunk.iloc[start:].copy()
             del chunk
             gc.collect()
+        if not emitted and not buffer.empty:
+            total = len(buffer)
+            feature_block = buffer[self.feature_columns].to_numpy(dtype=DEFAULT_NUMPY_DTYPE, copy=True)
+            feature_block = sanitize_numpy(feature_block)
+            if self.scaler is not None:
+                feature_block = self.scaler.transform(feature_block).astype(DEFAULT_NUMPY_DTYPE, copy=False)
+                feature_block = sanitize_numpy(feature_block)
+            binary_block = buffer["attack"].to_numpy(dtype=DEFAULT_NUMPY_DTYPE, copy=True)
+            family_block = (
+                buffer["family"]
+                .map(lambda fam: self.family_mapping.get(str(fam), self.family_default))
+                .to_numpy(dtype=np.int64, copy=False)
+            )
+            window_index = buffer["window_index"].to_numpy(dtype=np.int64, copy=True)
+            window_start = buffer["window_start"].to_numpy(copy=True)
+            window_end = buffer["window_end"].to_numpy(copy=True)
+            pcap_values = buffer["pcap"].astype(str).to_numpy(copy=False)
+            pad = seq_len - total
+            if pad > 0:
+                feature_block = np.concatenate([feature_block, np.repeat(feature_block[-1:], pad, axis=0)], axis=0)
+                binary_block = np.concatenate([binary_block, np.repeat(binary_block[-1:], pad)], axis=0)
+                family_block = np.concatenate([family_block, np.repeat(family_block[-1:], pad)], axis=0)
+            mask = np.zeros(seq_len, dtype=DEFAULT_NUMPY_DTYPE)
+            mask[:total] = 1.0
+            metadata = {
+                "start_index": int(window_index[0]),
+                "end_index": int(window_index[-1]),
+                "window_start": float(window_start[0]),
+                "window_end": float(window_end[-1]),
+                "pcap": str(pcap_values[0]),
+            }
+            yield {
+                "features": feature_block[:seq_len],
+                "binary_labels": binary_block[:seq_len],
+                "family_labels": family_block[:seq_len],
+                "mask": mask,
+                "metadata": metadata,
+            }
 
 
 def filter_normal_sequences(samples: Sequence[SequenceSample]) -> List[SequenceSample]:
@@ -230,10 +273,15 @@ def collate_fn(batch: Sequence[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tens
     features = torch.stack([_to_tensor(item["features"], DEFAULT_TORCH_DTYPE) for item in batch], dim=0)
     binary = torch.stack([_to_tensor(item["binary_labels"], DEFAULT_TORCH_DTYPE) for item in batch], dim=0)
     family = torch.stack([_to_tensor(item["family_labels"], torch.long) for item in batch], dim=0)
+    if "mask" in batch[0]:
+        mask = torch.stack([_to_tensor(item["mask"], DEFAULT_TORCH_DTYPE) for item in batch], dim=0)
+    else:
+        mask = torch.ones_like(binary)
     return {
         "features": features,
         "binary_labels": binary,
         "family_labels": family,
+        "mask": mask,
         "metadata": [item["metadata"] for item in batch],
     }
 

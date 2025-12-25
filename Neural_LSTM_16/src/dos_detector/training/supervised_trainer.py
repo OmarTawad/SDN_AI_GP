@@ -232,6 +232,9 @@ class SupervisedTrainer:
             steps += 1
             features = batch["features"].to(self.device, dtype=self.torch_dtype or DEFAULT_TORCH_DTYPE, non_blocking=True)
             binary_labels = batch["binary_labels"].to(self.device, dtype=self.torch_dtype or DEFAULT_TORCH_DTYPE, non_blocking=True)
+            mask = batch.get("mask")
+            if mask is not None:
+                mask = mask.to(self.device, dtype=self.torch_dtype or DEFAULT_TORCH_DTYPE, non_blocking=True)
             if not torch.isfinite(features).all():
                 self.logger.warning("non_finite_features_detected", step=step)
                 features = torch.nan_to_num(features, nan=0.0, posinf=0.0, neginf=0.0)
@@ -241,11 +244,17 @@ class SupervisedTrainer:
                 logits = torch.nan_to_num(outputs.window_logits, nan=0.0, posinf=LOGIT_CLIP, neginf=-LOGIT_CLIP)
                 logits = torch.clamp(logits, min=-LOGIT_CLIP, max=LOGIT_CLIP)
                 loss_dtype = torch.float32 if self.use_amp else (self.torch_dtype or DEFAULT_TORCH_DTYPE)
-                loss = F.binary_cross_entropy_with_logits(
+                loss_matrix = F.binary_cross_entropy_with_logits(
                     logits.to(loss_dtype),
                     binary_labels.to(loss_dtype),
                     pos_weight=pos_weight.to(loss_dtype),
+                    reduction="none",
                 )
+                if mask is not None:
+                    mask = mask.to(loss_dtype)
+                    loss = (loss_matrix * mask).sum() / torch.clamp(mask.sum(), min=1.0)
+                else:
+                    loss = loss_matrix.mean()
             if not torch.isfinite(loss):
                 self.logger.warning("non_finite_loss_detected", step=step)
                 continue
