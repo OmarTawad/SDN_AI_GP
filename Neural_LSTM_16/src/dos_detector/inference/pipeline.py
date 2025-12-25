@@ -246,9 +246,10 @@ class InferencePipeline:
                 ).to(self.device).unsqueeze(0)
                 tensor.requires_grad_(True)
                 self.supervised_model.zero_grad(set_to_none=True)
-                outputs = self.supervised_model(tensor)
-                score = outputs.sequence_prob
-                score.backward()
+                with torch.enable_grad(), torch.backends.cudnn.flags(enabled=False):
+                    outputs = self.supervised_model(tensor)
+                    score = outputs.sequence_prob
+                    score.backward()
                 gradients = tensor.grad.abs().squeeze(0)
                 feature_scores = gradients.mean(dim=0).cpu().numpy()
                 top_indices = np.argsort(feature_scores)[::-1][:top_k]
