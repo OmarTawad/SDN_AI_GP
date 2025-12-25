@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Sequence
@@ -25,6 +26,14 @@ class AttackInterval:
 
     def overlaps(self, start: float, end: float) -> bool:
         return max(self.start, start) < min(self.end, end)
+
+
+@dataclass
+class FileLabel:
+    """Represents a file-level label."""
+
+    attack: int
+    family: str
 
 
 def _parse_time(value: str | float | int) -> float:
@@ -50,13 +59,37 @@ def load_attack_intervals(path: Path, config: LabelsConfig) -> Dict[str, List[At
     intervals: Dict[str, List[AttackInterval]] = {}
     for _, row in frame.iterrows():
         family = row.get("family", config.default_family)
-        interval = AttackInterval(
-            start=_parse_time(row["start"]),
-            end=_parse_time(row["end"]),
-            family=str(family).lower(),
-        )
+        start = _parse_time(row["start"])
+        end = _parse_time(row["end"])
+        if end < start:
+            warnings.warn(
+                f"Attack interval end < start for {row.get('pcap')}; swapping values.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            start, end = end, start
+        interval = AttackInterval(start=start, end=end, family=str(family).lower())
         intervals.setdefault(str(row["pcap"]), []).append(interval)
     return intervals
+
+
+def load_file_labels(path: Path) -> Dict[str, FileLabel]:
+    """Load file-level labels from CSV."""
+
+    if not path.exists():
+        return {}
+    frame = pd.read_csv(path)
+    required = {"file", "attack_label"}
+    if not required.issubset(frame.columns):
+        missing = required - set(frame.columns)
+        raise ValueError(f"Missing required columns: {missing}")
+    labels: Dict[str, FileLabel] = {}
+    for _, row in frame.iterrows():
+        name = Path(str(row["file"])).name
+        attack = int(row.get("attack_label", 0))
+        family = str(row.get("family", "normal")).lower()
+        labels[name] = FileLabel(attack=attack, family=family)
+    return labels
 
 
 def label_windows(

@@ -171,7 +171,7 @@ class SupervisedTrainer:
         )
 
         best_auc = -float("inf")
-        best_checkpoint: Path | None = None
+        best_state: Dict[str, torch.Tensor] | None = None
         patience = self.config.training.supervised.early_stopping_patience
         epochs_without_improvement = 0
         history: List[Dict[str, float]] = []
@@ -194,11 +194,9 @@ class SupervisedTrainer:
             }
             history.append(record)
             self.logger.info("epoch_end", **record)
-            checkpoint_state = {k: v.detach().cpu() for k, v in model.state_dict().items()}
-            checkpoint_path = self._save_checkpoint(checkpoint_state, epoch, tag="epoch")
             if metrics["val_auc_pr"] > best_auc:
                 best_auc = metrics["val_auc_pr"]
-                best_checkpoint = checkpoint_path
+                best_state = {k: v.detach().cpu() for k, v in model.state_dict().items()}
                 epochs_without_improvement = 0
             else:
                 epochs_without_improvement += 1
@@ -206,13 +204,13 @@ class SupervisedTrainer:
                 self.logger.info("early_stop", epoch=epoch)
                 break
 
-        if best_checkpoint and best_checkpoint.exists():
-            model.load_state_dict(torch.load(best_checkpoint, map_location=self.device))
+        if best_state is not None:
+            model.load_state_dict(best_state)
         self._flush_model(Path(self.config.paths.supervised_model_path), model.state_dict())
         save_json(self.config.paths.metrics_path, {"supervised_history": history})
 
         final_metrics, cm = self._evaluate(model, val_loader, collect_confusion=True)
-        final_metrics["checkpoint"] = str(best_checkpoint or self.config.paths.supervised_model_path)
+        final_metrics["checkpoint"] = str(self.config.paths.supervised_model_path)
         final_metrics["split"] = "val"
         self._persist_eval_outputs(final_metrics, cm)
         return final_metrics

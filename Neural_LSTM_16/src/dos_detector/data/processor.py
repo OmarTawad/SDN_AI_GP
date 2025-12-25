@@ -9,7 +9,7 @@ from ..config.types import Config
 from ..features.feature_engineering import FeatureExtractor
 from ..utils import DEFAULT_NUMPY_DTYPE, sanitize_numpy
 from ..utils.io import ensure_dir, save_dataframe, save_json
-from .labels import load_attack_intervals, label_windows
+from .labels import FileLabel, load_attack_intervals, load_file_labels, label_windows
 from .pcap_reader import read_pcap, summarize_packets
 from .structures import Window
 from .windowing import WindowBuilder, WindowingParams
@@ -22,6 +22,7 @@ class FeaturePipeline:
         self.extractor = FeatureExtractor(config.feature, config.windowing.window_size)
         self._last_windows: List[Window] = []
         self._last_host_maps: Dict[str, Dict[int, Dict[str, int]]] = {"macs": {}, "ips": {}}
+        self._file_labels = self._load_file_labels()
 
     def process_single(self, pcap_path: Path) -> Tuple[pd.DataFrame, object]:
         limit_env = os.getenv("DOS_LIMIT_PKTS")
@@ -55,6 +56,14 @@ class FeaturePipeline:
         else:
             frame["attack"] = 0
             frame["family"] = self.config.labels.default_family
+        file_label = self._file_labels.get(pcap_path.name)
+        if file_label and int(file_label.attack) == 1:
+            total = int(len(frame))
+            attack_count = int(frame["attack"].sum()) if "attack" in frame.columns else 0
+            attack_ratio = attack_count / max(total, 1)
+            if attack_count == 0 or attack_ratio >= 0.95:
+                frame["attack"] = 1
+                frame["family"] = file_label.family
 
         feature_cols = [
             c
@@ -172,3 +181,12 @@ class FeaturePipeline:
         if base is None:
             return None
         return Path(base) / f"{pcap_path.stem}_hosts.json"
+
+    def _load_file_labels(self) -> Dict[str, FileLabel]:
+        intervals_csv = self.config.labels.intervals_csv
+        if intervals_csv is None:
+            return {}
+        candidate = Path(intervals_csv).parent / "file_labels.csv"
+        if not candidate.exists():
+            return {}
+        return load_file_labels(candidate)
