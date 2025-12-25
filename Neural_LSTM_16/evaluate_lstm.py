@@ -6,12 +6,14 @@ from __future__ import annotations
 import argparse
 import gc
 import json
+import os
 import time
 from pathlib import Path
 from typing import List, Sequence
 
 import numpy as np
 import psutil
+os.environ.setdefault("TORCH_CPP_LOG_LEVEL", "ERROR")
 import torch
 from sklearn.metrics import (
     accuracy_score,

@@ -3,6 +3,10 @@
 
 from __future__ import annotations
 
+import os
+
+os.environ.setdefault("TORCH_CPP_LOG_LEVEL", "ERROR")
+
 import glob
 import json
 from pathlib import Path

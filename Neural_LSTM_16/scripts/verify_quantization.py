@@ -12,6 +12,8 @@ import time
 from pathlib import Path
 from typing import Iterable, Sequence
 
+os.environ.setdefault("TORCH_CPP_LOG_LEVEL", "ERROR")
+
 import torch
 from torch import nn
 from torch.utils.data import DataLoader
