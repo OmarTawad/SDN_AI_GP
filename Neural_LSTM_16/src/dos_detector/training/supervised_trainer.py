@@ -84,11 +84,10 @@ class SupervisedTrainer:
         self.checkpoint_dir = CHECKPOINT_DIR
         self.checkpoints: deque[Path] = deque()
         self.processed_dir = Path(self.config.paths.processed_dir)
-        self.torch_dtype, self.numpy_dtype = resolve_precision_mode(
-            getattr(self.config.training.supervised, "precision_mode", None)
-        )
+        self.precision_mode = (getattr(self.config.training.supervised, "precision_mode", "") or "").lower()
+        self.torch_dtype, self.numpy_dtype = resolve_precision_mode(self.precision_mode)
         self.torch_dtype = resolve_torch_dtype(self.device, self.torch_dtype)
-        self.use_amp = self.torch_dtype == torch.float16 and self.device.type == "cuda"
+        self.use_amp = self.precision_mode == "autocast" and self.device.type == "cuda"
         self.grad_scaler = torch.cuda.amp.GradScaler(enabled=self.use_amp)
 
     def _resolve_files(self, split: str) -> List[str]:
@@ -243,19 +242,25 @@ class SupervisedTrainer:
                 outputs = model(features)
                 logits = torch.nan_to_num(outputs.window_logits, nan=0.0, posinf=LOGIT_CLIP, neginf=-LOGIT_CLIP)
                 logits = torch.clamp(logits, min=-LOGIT_CLIP, max=LOGIT_CLIP)
+                loss_dtype = torch.float32 if self.use_amp else (self.torch_dtype or DEFAULT_TORCH_DTYPE)
                 loss = F.binary_cross_entropy_with_logits(
-                    logits.to(torch.float32),
-                    binary_labels.to(torch.float32),
-                    pos_weight=pos_weight.to(torch.float32),
+                    logits.to(loss_dtype),
+                    binary_labels.to(loss_dtype),
+                    pos_weight=pos_weight.to(loss_dtype),
                 )
             if not torch.isfinite(loss):
                 self.logger.warning("non_finite_loss_detected", step=step)
                 continue
-            self.grad_scaler.scale(loss).backward()
-            self.grad_scaler.unscale_(optimizer)
-            nn.utils.clip_grad_norm_(model.parameters(), self.config.training.supervised.grad_clip)
-            self.grad_scaler.step(optimizer)
-            self.grad_scaler.update()
+            if self.grad_scaler.is_enabled():
+                self.grad_scaler.scale(loss).backward()
+                self.grad_scaler.unscale_(optimizer)
+                nn.utils.clip_grad_norm_(model.parameters(), self.config.training.supervised.grad_clip)
+                self.grad_scaler.step(optimizer)
+                self.grad_scaler.update()
+            else:
+                loss.backward()
+                nn.utils.clip_grad_norm_(model.parameters(), self.config.training.supervised.grad_clip)
+                optimizer.step()
             total_loss += float(loss.detach().cpu())
         steps = max(1, steps)
         return total_loss / steps
