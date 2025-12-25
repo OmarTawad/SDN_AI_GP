@@ -30,6 +30,7 @@ from ..utils import (
     resolve_precision_mode,
     resolve_torch_dtype,
     resolve_project_root,
+    sanitize_numpy,
 )
 from ..utils.io import (
     ensure_dir,
@@ -58,6 +59,7 @@ EVAL_DIR = PROJECT_ROOT / "eval"
 CHECKPOINT_DIR = PROJECT_ROOT / "checkpoints"
 SCALER_CHUNK_SIZE = 50_000
 MAX_CHECKPOINTS = 3
+LOGIT_CLIP = 20.0
 
 
 class SupervisedTrainer:
@@ -86,6 +88,8 @@ class SupervisedTrainer:
             getattr(self.config.training.supervised, "precision_mode", None)
         )
         self.torch_dtype = resolve_torch_dtype(self.device, self.torch_dtype)
+        self.use_amp = self.torch_dtype == torch.float16 and self.device.type == "cuda"
+        self.grad_scaler = torch.cuda.amp.GradScaler(enabled=self.use_amp)
 
     def _resolve_files(self, split: str) -> List[str]:
         entries = [entry["pcap"] for entry in self.manifest.get("frames", [])]
@@ -102,7 +106,9 @@ class SupervisedTrainer:
             for chunk in stream_dataframe(path, columns=self.feature_columns, chunk_size=self.chunk_size):
                 if chunk.empty:
                     continue
-                yield chunk.to_numpy(dtype=self.numpy_dtype or DEFAULT_NUMPY_DTYPE, copy=True)
+                block = chunk.to_numpy(dtype=self.numpy_dtype or DEFAULT_NUMPY_DTYPE, copy=True)
+                block = sanitize_numpy(block)
+                yield block
                 del chunk
                 gc.collect()
 
@@ -229,15 +235,28 @@ class SupervisedTrainer:
             steps += 1
             features = batch["features"].to(self.device, dtype=self.torch_dtype or DEFAULT_TORCH_DTYPE, non_blocking=True)
             binary_labels = batch["binary_labels"].to(self.device, dtype=self.torch_dtype or DEFAULT_TORCH_DTYPE, non_blocking=True)
+            if not torch.isfinite(features).all():
+                self.logger.warning("non_finite_features_detected", step=step)
+                features = torch.nan_to_num(features, nan=0.0, posinf=0.0, neginf=0.0)
             optimizer.zero_grad(set_to_none=True)
-            outputs = model(features)
-            loss = F.binary_cross_entropy_with_logits(outputs.window_logits, binary_labels, pos_weight=pos_weight)
-            loss.backward()
+            with torch.cuda.amp.autocast(enabled=self.use_amp):
+                outputs = model(features)
+                logits = torch.nan_to_num(outputs.window_logits, nan=0.0, posinf=LOGIT_CLIP, neginf=-LOGIT_CLIP)
+                logits = torch.clamp(logits, min=-LOGIT_CLIP, max=LOGIT_CLIP)
+                loss = F.binary_cross_entropy_with_logits(
+                    logits.to(torch.float32),
+                    binary_labels.to(torch.float32),
+                    pos_weight=pos_weight.to(torch.float32),
+                )
+            if not torch.isfinite(loss):
+                self.logger.warning("non_finite_loss_detected", step=step)
+                continue
+            self.grad_scaler.scale(loss).backward()
+            self.grad_scaler.unscale_(optimizer)
             nn.utils.clip_grad_norm_(model.parameters(), self.config.training.supervised.grad_clip)
-            optimizer.step()
+            self.grad_scaler.step(optimizer)
+            self.grad_scaler.update()
             total_loss += float(loss.detach().cpu())
-            del batch, features, binary_labels, outputs, loss
-            gc.collect()
         steps = max(1, steps)
         return total_loss / steps
 
@@ -258,8 +277,17 @@ class SupervisedTrainer:
                     break
                 features = batch["features"].to(self.device, dtype=self.torch_dtype or DEFAULT_TORCH_DTYPE, non_blocking=True)
                 binary_labels = batch["binary_labels"].to(self.device, dtype=self.torch_dtype or DEFAULT_TORCH_DTYPE, non_blocking=True)
-                outputs = model(features)
-                probs = torch.sigmoid(outputs.window_logits).cpu().numpy()
+                if not torch.isfinite(features).all():
+                    self.logger.warning("non_finite_features_detected", step=step)
+                    features = torch.nan_to_num(features, nan=0.0, posinf=0.0, neginf=0.0)
+                with torch.cuda.amp.autocast(enabled=self.use_amp):
+                    outputs = model(features)
+                    logits = torch.nan_to_num(outputs.window_logits, nan=0.0, posinf=LOGIT_CLIP, neginf=-LOGIT_CLIP)
+                    logits = torch.clamp(logits, min=-LOGIT_CLIP, max=LOGIT_CLIP)
+                probs = torch.sigmoid(logits).cpu().numpy()
+                if not np.isfinite(probs).all():
+                    self.logger.warning("non_finite_probs_detected", step=step)
+                    probs = np.nan_to_num(probs, nan=0.0, posinf=1.0, neginf=0.0)
                 labels = binary_labels.cpu().numpy()
                 for i, meta in enumerate(batch["metadata"]):
                     pcap = meta["pcap"]
@@ -270,16 +298,21 @@ class SupervisedTrainer:
                         window_scores[key].append(float(probs[i, offset]))
                         window_labels[key] = int(labels[i, offset])
                     file_labels[pcap] = max(file_labels[pcap], int(labels[i].max()))
-                del batch, features, binary_labels, outputs
-                gc.collect()
         if not window_scores:
             metrics = {"val_auc_pr": 0.0, "val_auc_roc": 0.0}
             return metrics, confusion
         sorted_keys = sorted(window_scores.keys(), key=lambda item: (item[0], item[1]))
-        scores = np.array(
-            [float(np.mean(window_scores[key])) for key in sorted_keys],
-            dtype=self.numpy_dtype or DEFAULT_NUMPY_DTYPE,
-        )
+        scores_list: List[float] = []
+        for key in sorted_keys:
+            values = np.array(window_scores[key], dtype=float)
+            values = values[np.isfinite(values)]
+            if values.size == 0:
+                scores_list.append(0.0)
+            else:
+                scores_list.append(float(values.mean()))
+        scores = np.array(scores_list, dtype=self.numpy_dtype or DEFAULT_NUMPY_DTYPE)
+        scores = np.nan_to_num(scores, nan=0.0, posinf=1.0, neginf=0.0)
+        scores = np.clip(scores, 0.0, 1.0)
         labels = np.array([window_labels[key] for key in sorted_keys], dtype=int)
         window_metrics = compute_window_metrics(labels.tolist(), scores.tolist())
         file_scores: Dict[str, List[float]] = defaultdict(list)

@@ -7,7 +7,7 @@ import pandas as pd
 
 from ..config.types import Config
 from ..features.feature_engineering import FeatureExtractor
-from ..utils import DEFAULT_NUMPY_DTYPE
+from ..utils import DEFAULT_NUMPY_DTYPE, sanitize_numpy
 from ..utils.io import ensure_dir, save_dataframe, save_json
 from .labels import load_attack_intervals, label_windows
 from .pcap_reader import read_pcap, summarize_packets
@@ -71,7 +71,9 @@ class FeaturePipeline:
             }
         ]
         if feature_cols:
-            frame[feature_cols] = frame[feature_cols].astype(DEFAULT_NUMPY_DTYPE)
+            feature_block = frame[feature_cols].to_numpy(dtype=DEFAULT_NUMPY_DTYPE, copy=True)
+            feature_block = sanitize_numpy(feature_block)
+            frame[feature_cols] = feature_block
         fmap = self.config.labels.family_mapping
         frame["family_index"] = frame["family"].map(lambda f: fmap.get(str(f).lower(), 0)).astype("int64")
         t4 = time.perf_counter()

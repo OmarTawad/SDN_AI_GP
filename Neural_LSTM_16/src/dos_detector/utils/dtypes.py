@@ -36,6 +36,14 @@ def resolve_torch_dtype(device: torch.device, dtype: torch.dtype) -> torch.dtype
     return dtype
 
 
+def sanitize_numpy(array: np.ndarray) -> np.ndarray:
+    """Replace non-finite values in numpy arrays with zeros."""
+
+    if not np.isfinite(array).all():
+        return np.nan_to_num(array, nan=0.0, posinf=0.0, neginf=0.0)
+    return array
+
+
 def safe_cast_tensor(value: torch.Tensor | np.ndarray, dtype: torch.dtype) -> torch.Tensor:
     """Cast to a dtype while clamping to the representable range."""
 
@@ -43,9 +51,15 @@ def safe_cast_tensor(value: torch.Tensor | np.ndarray, dtype: torch.dtype) -> to
         tensor = value
     else:
         tensor = torch.as_tensor(value)
-    if torch.is_floating_point(tensor) and dtype in (torch.float16, torch.bfloat16):
-        tensor = tensor.to(torch.float32)
+    if not torch.is_floating_point(tensor):
+        return tensor.to(dtype=dtype)
+    try:
         info = torch.finfo(dtype)
+    except (TypeError, RuntimeError):
+        return tensor.to(dtype=dtype)
+    tensor = tensor.to(torch.float32)
+    tensor = torch.nan_to_num(tensor, nan=0.0, posinf=info.max, neginf=info.min)
+    if dtype in (torch.float16, torch.bfloat16):
         tensor = torch.clamp(tensor, min=info.min, max=info.max)
     return tensor.to(dtype=dtype)
 
@@ -56,4 +70,5 @@ __all__ = [
     "resolve_precision_mode",
     "safe_cast_tensor",
     "resolve_torch_dtype",
+    "sanitize_numpy",
 ]

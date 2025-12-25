@@ -14,6 +14,7 @@ from .dtypes import (
     resolve_precision_mode,
     resolve_torch_dtype,
     safe_cast_tensor,
+    sanitize_numpy,
 )
 
 CPU_DEVICE = torch.device("cpu")
@@ -89,4 +90,5 @@ __all__ = [
     "resolve_precision_mode",
     "resolve_torch_dtype",
     "safe_cast_tensor",
+    "sanitize_numpy",
 ]

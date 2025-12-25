@@ -15,7 +15,7 @@ from torch.utils.data import Dataset, IterableDataset, get_worker_info
 
 from ..config.types import WindowingConfig
 from .structures import SequenceSample
-from ..utils import DEFAULT_NUMPY_DTYPE, DEFAULT_TORCH_DTYPE, safe_cast_tensor
+from ..utils import DEFAULT_NUMPY_DTYPE, DEFAULT_TORCH_DTYPE, safe_cast_tensor, sanitize_numpy
 from ..utils.io import resolve_processed_frame, stream_dataframe
 
 DEFAULT_CHUNK_SIZE = 50_000
@@ -174,8 +174,10 @@ class StreamingSequenceDataset(IterableDataset[Dict[str, Any]]):
                 chunk = pd.concat([buffer, chunk], ignore_index=True)
             chunk = chunk.reset_index(drop=True)
             feature_block = chunk[self.feature_columns].to_numpy(dtype=DEFAULT_NUMPY_DTYPE, copy=True)
+            feature_block = sanitize_numpy(feature_block)
             if self.scaler is not None:
                 feature_block = self.scaler.transform(feature_block).astype(DEFAULT_NUMPY_DTYPE, copy=False)
+                feature_block = sanitize_numpy(feature_block)
             binary_block = chunk["attack"].to_numpy(dtype=DEFAULT_NUMPY_DTYPE, copy=True)
             family_block = (
                 chunk["family"]

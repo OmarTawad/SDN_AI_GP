@@ -25,6 +25,7 @@ from ..utils import (
     resolve_precision_mode,
     resolve_torch_dtype,
     safe_cast_tensor,
+    sanitize_numpy,
 )
 from ..utils.io import load_dataframe, load_joblib, load_json, resolve_processed_frame
 from ..utils.logging import configure_logging, get_logger
@@ -34,6 +35,8 @@ from .postprocessing import DecisionGate
 
 class InferencePipeline:
     """High-level orchestration for inference."""
+
+    LOGIT_CLIP = 20.0
 
     def __init__(self, config: Config) -> None:
         self.config = config
@@ -97,7 +100,9 @@ class InferencePipeline:
         host_maps = host_maps or {"macs": {}, "ips": {}}
         features_supervised = frame.copy()
         feature_block = frame[self.feature_columns].to_numpy(dtype=self.numpy_dtype or DEFAULT_NUMPY_DTYPE, copy=True)
+        feature_block = sanitize_numpy(feature_block)
         scaled_block = self.scaler.transform(feature_block).astype(self.numpy_dtype or DEFAULT_NUMPY_DTYPE, copy=False)
+        scaled_block = sanitize_numpy(scaled_block)
         features_supervised[self.feature_columns] = scaled_block
 
         sup_dataset = SequenceDataset([features_supervised], self.feature_columns, self.family_mapping, self.config.windowing)
@@ -177,7 +182,16 @@ class InferencePipeline:
             for batch in progress(loader, desc="Inference", unit="batch", leave=False):
                 features = safe_cast_tensor(batch["features"], self.torch_dtype or DEFAULT_TORCH_DTYPE).to(self.device)
                 outputs = self.supervised_model(features)
-                probs = torch.sigmoid(outputs.window_logits).cpu().numpy()
+                logits = torch.nan_to_num(
+                    outputs.window_logits,
+                    nan=0.0,
+                    posinf=self.LOGIT_CLIP,
+                    neginf=-self.LOGIT_CLIP,
+                )
+                logits = torch.clamp(logits, min=-self.LOGIT_CLIP, max=self.LOGIT_CLIP)
+                probs = torch.sigmoid(logits).cpu().numpy()
+                if not np.isfinite(probs).all():
+                    probs = np.nan_to_num(probs, nan=0.0, posinf=1.0, neginf=0.0)
                 for i, meta in enumerate(batch["metadata"]):
                     start_index = meta["start_index"]
                     end_index = meta["end_index"]

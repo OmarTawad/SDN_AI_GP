@@ -30,7 +30,15 @@ class FileMetrics:
 def compute_window_metrics(labels: Sequence[int], scores: Sequence[float]) -> WindowMetrics:
     y_true = np.array(labels, dtype=int)
     y_scores = np.array(scores, dtype=float)
-    if y_true.sum() == 0:
+    if y_true.size == 0:
+        return WindowMetrics(auc_roc=0.0, auc_pr=0.0, precision=0.0, recall=0.0, f1=0.0)
+    finite_mask = np.isfinite(y_scores)
+    if not finite_mask.all():
+        y_true = y_true[finite_mask]
+        y_scores = y_scores[finite_mask]
+    if y_true.size == 0:
+        return WindowMetrics(auc_roc=0.0, auc_pr=0.0, precision=0.0, recall=0.0, f1=0.0)
+    if np.unique(y_true).size < 2:
         auc_roc = 0.0
         auc_pr = 0.0
     else:
