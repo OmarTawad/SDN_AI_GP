@@ -270,6 +270,9 @@ class InferencePipeline:
         return results
 
     def _explain_sequence(self, dataset: SequenceDataset, window_index: int) -> Dict[str, object]:
+        if self.quantization_enabled:
+            self.logger.info("explainability_disabled_for_quantized_model")
+            return {}
         top_k = self.config.explainability.top_features
         for sample in dataset.samples:
             start = sample.metadata.get("start_index")
