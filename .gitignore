@@ -13,6 +13,7 @@
 *.pcapng
 **/samples/
 **/samples/**
+**/samples_real_backup/**
 
 # model checkpoints
 *.pt
@@ -39,3 +40,6 @@ __pycache__/
 **/reports_fp16/**
 **/reports_int8/**
 **/reports_int8/**
+
+
+*.csv

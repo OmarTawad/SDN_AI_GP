@@ -43,7 +43,7 @@ labels:
 quantization:
   enabled: false
   mode: dynamic
-  backend: fbgemm
+  backend: qnnpack
   checkpoint_path: ../models/supervised_int8_dynamic.pt
 data:
   train_files: []
