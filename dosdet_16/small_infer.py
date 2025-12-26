@@ -9,6 +9,7 @@ import os
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict
+from contextlib import nullcontext
 
 # Constrain BLAS threads early for 2 vCPU deployments
 os.environ.setdefault("OMP_NUM_THREADS", "2")
@@ -19,9 +20,7 @@ os.environ.setdefault("TORCH_CPP_LOG_LEVEL", "ERROR")
 
 import numpy as np
 import torch
-from torch.cuda.amp import autocast
 import yaml
-from contextlib import nullcontext
 
 from data.pcap_reader import iter_rows_from_pcap
 from data.windowizer import iter_windows
@@ -52,8 +51,11 @@ def infer_first_window(
     window_sec: float,
     micro_bins: int,
     device: torch.device,
-    dtype_model: torch.dtype,
+    use_amp: bool,
+    fp16_clamp: bool,
+    fp16_max: float,
 ) -> Dict[str, Any]:
+    use_amp = bool(use_amp and device.type == "cuda")
     ssdp_v4 = cfg["features"]["ssdp_multicast_ipv4"]
     ssdp_v6 = cfg["features"]["ssdp_multicast_ipv6"]
     top_ports = list(meta.get("top_k_udp_ports", cfg["data"]["top_k_udp_ports"]))
@@ -81,29 +83,25 @@ def infer_first_window(
     stat_scaled = scaler.transform(static_vec.reshape(1, -1), feature_names)
     stat_slim = slimmer.transform(stat_scaled)
 
-    seq_t = torch.from_numpy(seq).unsqueeze(0).to(device, non_blocking=True, dtype=dtype_model)
-    static_t = torch.from_numpy(stat_slim).to(device, non_blocking=True, dtype=dtype_model)
-    if dtype_model == torch.float16 and fp16_clamp:
+    dtype = torch.float16 if use_amp else torch.float32
+    seq_t = torch.from_numpy(seq).unsqueeze(0).to(device, non_blocking=True, dtype=dtype)
+    static_t = torch.from_numpy(stat_slim).to(device, non_blocking=True, dtype=dtype)
+    if fp16_clamp:
         seq_t = torch.clamp(seq_t, min=-fp16_max, max=fp16_max)
         static_t = torch.clamp(static_t, min=-fp16_max, max=fp16_max)
 
     with torch.inference_mode():
-        with (
-            autocast(dtype=dtype_model)
-            if device.type == "cuda" and dtype_model == torch.float16
-            else nullcontext()
-        ):
+        with (torch.autocast(device_type=device.type, dtype=torch.float16) if use_amp else nullcontext()):
             out = model(seq_t, static_t)
-            logit_T = out["logits"].squeeze() / max(float(T), 1e-3)
-            prob_t = torch.sigmoid(logit_T)
-            logit = float(logit_T.float().item())
-            prob = float(prob_t.item())
+        logit = float(out["logits"].detach().float().cpu().numpy().ravel()[0])
         attn_peak_bin = None
         attn = out.get("attn")
         if attn is not None:
             attn_arr = attn.cpu().numpy().ravel()
             attn_peak_bin = int(np.argmax(attn_arr))
 
+    logit_T = logit / max(float(T), 1e-3)
+    prob = float(1.0 / (1.0 + np.exp(-logit_T)))
     label = "attack" if prob >= tau else "normal"
 
     return {
@@ -142,16 +140,11 @@ def main() -> None:
         raise FileNotFoundError(f"PCAP not found: {pcap_path}")
 
     save_dir = cfg["paths"]["artifacts_dir"]
-    if not torch.cuda.is_available():
-        raise RuntimeError("CUDA device required for GPU inference.")
-
-    model, scaler, slimmer, meta, calib = _load_artifacts(save_dir, cfg)
-    device = torch.device("cuda")
-    use_fp16 = bool(cfg["training"].get("fp16", cfg["training"].get("amp", False)))
-    fp16_clamp = bool(cfg["training"].get("fp16_clamp", True)) and use_fp16
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    use_amp = bool(cfg.get("training", {}).get("amp", False) and device.type == "cuda")
+    model, scaler, slimmer, meta, calib = _load_artifacts(save_dir, cfg, device, use_amp)
+    fp16_clamp = bool(cfg["training"].get("fp16_clamp", True)) and use_amp
     fp16_max = float(torch.finfo(torch.float16).max)
-    dtype_model = torch.float16 if use_fp16 else torch.float32
-    model.to(device=device, dtype=dtype_model)
 
     T = float(calib.get("temperature", 1.0))
     tau = float(args.tau if args.tau is not None else calib.get("threshold", 0.5))
@@ -171,7 +164,9 @@ def main() -> None:
         window_sec,
         micro_bins,
         device,
-        dtype_model,
+        use_amp,
+        fp16_clamp,
+        fp16_max,
     )
     result["inference_time_sec"] = round(time.perf_counter() - start, 6)
 

@@ -1,6 +1,24 @@
-# DoS Detector (Neural_LSTM)
+# DoS Detector (Neural_LSTM_16_mixedP, mixed precision)
 
 This module contains an end-to-end pipeline for detecting Distributed Denial of Service (DoS) activity from PCAP captures using an LSTM-based sequence classifier. The latest iteration shares the exact 1 s / 0.5 s sliding-window features used by the CNN (micro-bin histograms, protocol counts, SSDP tokens) and exposes a single binary head: every downstream score, gate, and attribution is derived from that attack-vs-normal probability. The inference stage highlights the most suspicious MAC and IP addresses observed during an attack, making it easier to pivot from the prediction to actionable remediation.
+
+## Variant Notes (Mixed Precision)
+
+- Mixed precision is controlled by `training.supervised.precision_mode` in `configs/config.yaml`.
+- Supported values: `float16`, `bfloat16`, `autocast`, `float32`.
+- `autocast` uses AMP on CUDA; CPU falls back to float32.
+- No int8 quantization support; use `../Neural_LSTM_int8` for dynamic int8.
+- Run the commands below from the `Neural_LSTM_16_mixedP/` directory.
+- These commands assume `configs/config.yaml` uses local paths under this directory (`models/`, `reports/`, `data/processed/`).
+
+## Quick Commands (Mixed Precision)
+
+```bash
+python3 -m dos_detector.cli extract-features "pcaps/*.pcap" --out data/processed --config-path configs/config.yaml
+python3 -m dos_detector.cli train-supervised --config-path configs/config.yaml
+python3 -m dos_detector.cli infer path/to/capture.pcap --out reports/prediction.json --config-path configs/config.yaml
+python3 -m dos_detector.cli batch-infer "pcaps/*.pcap" --out-dir reports --config-path configs/config.yaml
+```
 
 ## Environment Setup
 

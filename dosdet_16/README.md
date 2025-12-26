@@ -1,6 +1,6 @@
 # DOS Detector Pipeline
 
-Modernised training/inference stack for the simulated SDN IoT DoS detection project. The repository is now focused on a single workflow: preprocess raw pcaps into parquet shards, train the CNN detector, and run calibrated inference + evaluation.
+Modernised training/inference stack for the simulated SDN IoT DoS detection project. The repository is now focused on a single workflow: preprocess raw pcaps into parquet shards, train the CNN detector, and run calibrated inference + evaluation. This `dosdet_16` variant defaults to AMP/FP16 on CUDA and writes outputs to separate `artifacts_fp16/` + `reports_fp16/` directories so FP32 runs remain untouched.
 
 ## Project layout
 
@@ -18,11 +18,11 @@ config.yaml         # single source of truth for paths + hyper-params
 requirements.txt    # legacy dependencies (use repo-root pyproject.toml)
 ```
 
-Generated artefacts live under `artifacts/`, cached parquet shards under `cache/`, and inference reports under `reports/` (all ignored by git).
+Generated artefacts live under `artifacts_fp16/`, cached parquet shards under `cache/`, and inference reports under `reports_fp16/` (all ignored by git).
 
 ## Environment setup
 
-1. Python 3.9+ recommended and **CUDA 11.8 GPU is required (fp16 path; use `dosdet` for fp32 or `dosdet_8` for int8)**.
+1. Python 3.9+ recommended.
 2. Create a virtualenv and install dependencies:
    ```bash
    python -m venv .venv
@@ -32,7 +32,7 @@ Generated artefacts live under `artifacts/`, cached parquet shards under `cache/
    # Install CUDA 11.8 build of PyTorch 2.0.1 (keeps wheels small/fast on GPU)
    pip install --upgrade --extra-index-url https://download.pytorch.org/whl/cu118 torch==2.0.1
    ```
-   Install a CUDA-enabled PyTorch build if you plan to train on GPU (see https://pytorch.org/get-started/locally/). This build keeps the same CNN/feature pipeline as `dosdet_8` but runs in standard float32; the 8-bit fake-quant path is enabled only in `dosdet_8`.
+   Install a CUDA-enabled PyTorch build if you plan to train on GPU (see https://pytorch.org/get-started/locally/).
 
 All scripts respect the 2 vCPU constraint: BLAS/Torch threads are capped to two, data loaders run single-threaded by default, and every long-running step renders a tqdm progress bar so you can track preprocess/train/infer progress without flooding the terminal.
 
@@ -47,17 +47,17 @@ The `Makefile` reflects the standard flow; the commands below assume you activat
    ```
    Uses `config.yaml:preprocess.pcaps_glob` and `labels_csv`. Adjust those paths (and windowing parameters) before running on your own data.
 
-2. **Train the detector** (reads cached shards, writes to `artifacts/`):
+2. **Train the detector** (reads cached shards, writes to `artifacts_fp16/`):
    ```bash
    make train
    ```
    Training performs thin/ full validation splits, optional hard-negative mining, temperature scaling and persists:
-   - `artifacts/model_best.pt`
-   - `artifacts/scaler.pkl` and PCA components
-   - `artifacts/feature_model_meta.json`
-   - `artifacts/calibration.json`
+   - `artifacts_fp16/model_best.pt`
+   - `artifacts_fp16/scaler.pkl` and PCA components
+   - `artifacts_fp16/feature_model_meta.json`
+   - `artifacts_fp16/calibration.json`
 
-3. **Run inference** (produces per-window CSV + per-file JSON, default `reports/`):
+3. **Run inference** (produces per-window CSV + per-file JSON, default `reports_fp16/`):
    ```bash
    make infer
    ```
@@ -74,13 +74,13 @@ The `Makefile` reflects the standard flow; the commands below assume you activat
    make eval
    make explain
    ```
-   The explanation step writes permutation importances (`perm_importance.json`) and attention heatmaps in `reports/explain/`.
+   The explanation step writes permutation importances (`perm_importance.json`) and attention heatmaps in `reports_fp16/explain/`.
 
 ## Configuration highlights (`config.yaml`)
 
 - `paths.cache_dir`, `paths.artifacts_dir`, `paths.reports_dir`: all writable output directories.
 - `windowing` + `data.top_k_udp_ports`: control feature extraction.
-- `training`: tuned for small machines (`batch_size=128`, no AMP, zero worker loaders). Bump `batch_size` / `dataloader_workers` only if you have more CPU.
+- `training`: tuned for small machines (`batch_size=128`, AMP enabled on GPU, zero worker loaders). Bump `batch_size` / `dataloader_workers` only if you have more CPU.
 - `decision`: hysteresis + plausibility-gate parameters consumed by `infer.py` (and overridable via CLI flags).
 
 Adjust the config once and rely on the Makefile; scripts read everything from the same file.
@@ -91,7 +91,7 @@ Use
 ```bash
 make clean
 ```
-to drop `cache/`, `artifacts/`, and `reports/`. The `.gitignore` already keeps these directories out of version control.
+to drop `cache/`, `artifacts_fp16/`, and `reports_fp16/`. The `.gitignore` already keeps these directories out of version control.
 
 ## Tests
 

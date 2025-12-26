@@ -19,4 +19,4 @@ explain:
 	$(PY) explain.py --config $(CONFIG)
 
 clean:
-	rm -rf artifacts/ cache/ reports/
+	rm -rf artifacts_fp16/ cache/ reports_fp16/

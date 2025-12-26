@@ -10,18 +10,28 @@ import os
 from pathlib import Path
 from typing import Dict, List, Tuple
 
+os.environ.setdefault("OMP_NUM_THREADS", "2")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "2")
+os.environ.setdefault("MKL_NUM_THREADS", "2")
+os.environ.setdefault("NUMEXPR_NUM_THREADS", "2")
+os.environ.setdefault("TORCH_CPP_LOG_LEVEL", "ERROR")
+
 import numpy as np
 import torch
-from torch.cuda.amp import autocast
 import yaml
 from sklearn.metrics import accuracy_score, confusion_matrix, f1_score, precision_score, recall_score, roc_auc_score, classification_report
 from torch.utils.data import DataLoader
-from contextlib import nullcontext
 
 from features.feature_slimming import StaticSlimmer
 from features.scaler import RobustScaler
 from models.dws_cnn import FastDetector
 from train import CachedDataset, collate, load_manifest, _read_parquet
+
+torch.set_num_threads(min(2, max(1, os.cpu_count() or 1)))
+try:
+    torch.set_num_interop_threads(1)
+except AttributeError:
+    pass
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_EVAL_DIR = ROOT / "eval"
@@ -85,23 +95,28 @@ def _resolve_artifacts_dir(arg: str | None, cfg: dict) -> Path:
     raise FileNotFoundError("Unable to locate model_best.pt in artifacts/models/checkpoints.")
 
 
-def _load_artifacts(art_dir: Path, cfg: dict):
+def _load_artifacts(art_dir: Path, cfg: dict, device: torch.device, amp_enabled: bool):
     scaler = RobustScaler.load(str(art_dir))
-    slimmer = StaticSlimmer()
-    slimmer.load(str(art_dir))
     with open(art_dir / "feature_model_meta.json", "r", encoding="utf-8") as f:
         meta = json.load(f)
 
+    static_dim = int(meta["static_dim"])
+    slimmer = StaticSlimmer(out_dim=static_dim)
+    slimmer.load(str(art_dir))
     model = FastDetector(
         seq_in_dim=int(meta["seq_in_dim"]),
-        static_dim=int(meta["static_dim"]),
+        static_dim=static_dim,
         channels=tuple(meta.get("channels", cfg["training"]["channels"])),
         k=int(meta.get("kernel_size", cfg["training"]["kernel_size"])),
         drop=float(meta.get("dropout", cfg["training"]["dropout"])),
         mlp_hidden=tuple(meta.get("mlp_hidden", cfg["training"]["mlp_hidden"])),
     )
-    checkpoint = torch.load(art_dir / "model_best.pt", map_location="cpu")
+    checkpoint = torch.load(art_dir / "model_best.pt", map_location=device)
     model.load_state_dict(checkpoint["model"])
+    model.to(device)
+    if amp_enabled:
+        model = model.half()
+    model.eval()
     calib_path = art_dir / "calibration.json"
     if calib_path.exists():
         with open(calib_path, "r", encoding="utf-8") as f:
@@ -124,30 +139,25 @@ def _evaluate(
     slimmer: StaticSlimmer,
     calib: Dict[str, float],
     device: torch.device,
-    dtype_model: torch.dtype,
+    amp_enabled: bool,
 ) -> Tuple[Dict[str, float | None], np.ndarray, str]:
-    model.to(device=device, dtype=dtype_model).eval()
     temperature = float(calib.get("temperature", 1.0)) or 1.0
     threshold = float(calib.get("threshold", 0.5))
 
     probs, preds, trues = [], [], []
     with torch.inference_mode():
         for seq, static, y, *_ in loader:
-            seq = seq.to(device, non_blocking=True, dtype=dtype_model)
+            seq = seq.to(device, non_blocking=True)
             stat_np = static.numpy()
             stat_scaled = scaler.transform(stat_np)
             stat_slim = slimmer.transform(stat_scaled).astype(np.float32)
-            static_t = torch.from_numpy(stat_slim).to(device, non_blocking=True, dtype=dtype_model)
-            if fp16_clamp and dtype_model == torch.float16:
-                seq = torch.clamp(seq, min=-fp16_max, max=fp16_max)
-                static_t = torch.clamp(static_t, min=-fp16_max, max=fp16_max)
-            with (
-                autocast(dtype=dtype_model)
-                if device.type == "cuda" and dtype_model == torch.float16
-                else nullcontext()
-            ):
+            static_t = torch.from_numpy(stat_slim).to(device, non_blocking=True)
+            if amp_enabled and device.type == "cuda":
+                seq = seq.half()
+                static_t = static_t.half()
+            with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=amp_enabled and device.type == "cuda"):
                 logits = model(seq, static_t)["logits"].squeeze(-1)
-                logits = logits / temperature
+            logits = logits.float() / temperature
             batch_prob = torch.sigmoid(logits).cpu().numpy()
             probs.append(batch_prob)
             preds.append((batch_prob >= threshold).astype(int))
@@ -187,17 +197,12 @@ def main():
     eval_dir = _resolve_path(args.eval_dir)
     os.makedirs(eval_dir, exist_ok=True)
 
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    amp_enabled = bool(cfg.get("training", {}).get("amp", False) and device.type == "cuda")
+
     loader = _build_loader(cfg, batch_size=args.batch_size)
-    model, scaler, slimmer, calib = _load_artifacts(artifacts_dir, cfg)
-    if not torch.cuda.is_available():
-        raise RuntimeError("CUDA device required for GPU evaluation.")
-    device = torch.device("cuda")
-    use_fp16 = bool(cfg["training"].get("fp16", cfg["training"].get("amp", False)))
-    fp16_clamp = bool(cfg["training"].get("fp16_clamp", True)) and use_fp16
-    fp16_max = float(torch.finfo(torch.float16).max)
-    dtype_model = torch.float16 if use_fp16 else torch.float32
-    model = model.to(device=device, dtype=dtype_model)
-    metrics, cm, report = _evaluate(model, loader, scaler, slimmer, calib, device, dtype_model)
+    model, scaler, slimmer, calib = _load_artifacts(artifacts_dir, cfg, device, amp_enabled)
+    metrics, cm, report = _evaluate(model, loader, scaler, slimmer, calib, device, amp_enabled)
 
     with open(eval_dir / "metrics.json", "w", encoding="utf-8") as f:
         json.dump(metrics, f, indent=2)

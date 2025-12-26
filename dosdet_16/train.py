@@ -17,10 +17,10 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
-from torch.cuda.amp import GradScaler, autocast
+from torch.cuda.amp import GradScaler
+from contextlib import nullcontext
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import DataLoader, Dataset
-from contextlib import nullcontext
 import yaml
 from tqdm import tqdm
 
@@ -39,6 +39,18 @@ try:
     torch.set_num_interop_threads(1)
 except AttributeError:
     pass
+
+
+def _cuda_supported() -> bool:
+    """Return True only if the installed torch build supports the current GPU arch."""
+    if not torch.cuda.is_available():
+        return False
+    try:
+        major, minor = torch.cuda.get_device_capability(0)
+    except Exception:
+        return False
+    # The packaged wheel supports sm_70+. 1050 Ti is sm_61 and will fail kernels.
+    return (major, minor) >= (7, 0)
 
 
 def _read_parquet(path: str, columns: List[str] | None = None) -> pd.DataFrame:
@@ -320,12 +332,10 @@ def main() -> None:
     K_static_slim = slimmer.out_dim
 
     tr_cfg = cfg["training"]
-    use_fp16 = bool(tr_cfg.get("fp16", tr_cfg.get("amp", False)))
-    amp_enabled = bool(tr_cfg.get("amp", use_fp16))
-    dtype_amp = torch.float16 if use_fp16 else torch.float32
-    dtype_batch = torch.float16 if use_fp16 else torch.float32
-    fp16_clamp = bool(tr_cfg.get("fp16_clamp", True)) and use_fp16
-    fp16_max = float(torch.finfo(torch.float16).max)
+    use_cuda = _cuda_supported()
+    if tr_cfg.get("amp", False) and not use_cuda:
+        print("[CUDA] GPU unsupported by this torch build; falling back to CPU and disabling AMP.")
+
     model = FastDetector(
         seq_in_dim=K_seq,
         static_dim=K_static_slim,
@@ -334,11 +344,11 @@ def main() -> None:
         drop=tr_cfg["dropout"],
         mlp_hidden=tuple(tr_cfg["mlp_hidden"]),
     )
-    if not torch.cuda.is_available():
-        raise RuntimeError("CUDA device required for training.")
-    device = torch.device("cuda")
-    # Keep weights in float32 for stable optim/grad scaling; autocast handles fp16 math.
-    model.to(device=device, dtype=torch.float32)
+    device = torch.device("cuda" if use_cuda else "cpu")
+    model.to(device=device)
+    amp_enabled = bool(tr_cfg.get("amp", False) and use_cuda)
+    fp16_clamp = bool(tr_cfg.get("fp16_clamp", True)) and amp_enabled
+    fp16_max = float(torch.finfo(torch.float16).max)
 
     criterion = nn.BCEWithLogitsLoss(
         pos_weight=torch.tensor([tr_cfg["class_weight_pos"]], device=device, dtype=torch.float32)
@@ -389,20 +399,17 @@ def main() -> None:
             stat_np = static.cpu().numpy()
             stat_scaled = scaler.transform(stat_np, feature_names)
             stat_slim = slimmer.transform(stat_scaled)
-            static_t = torch.from_numpy(stat_slim).to(device, non_blocking=True, dtype=dtype_batch)
+            static_t = torch.from_numpy(stat_slim).to(device, non_blocking=True).float()
             if fp16_clamp:
                 static_t = torch.clamp(static_t, min=-fp16_max, max=fp16_max)
 
-            seq = seq.to(device, non_blocking=True, dtype=dtype_batch)
+            seq = seq.to(device, non_blocking=True)
             if fp16_clamp:
                 seq = torch.clamp(seq, min=-fp16_max, max=fp16_max)
-            y = y.to(device, dtype=dtype_batch)
+            y = y.to(device)
 
-            with (
-                autocast(dtype=dtype_amp)
-                if amp_enabled
-                else nullcontext()
-            ):
+            cast_ctx = torch.amp.autocast("cuda") if amp_enabled else nullcontext()
+            with cast_ctx:
                 out = model(seq, static_t)
                 logits = out["logits"]
                 if not torch.isfinite(logits).all():
@@ -413,7 +420,7 @@ def main() -> None:
                 loss = criterion(logits, y)
 
             if not torch.isfinite(loss):
-                print("[Warn] Non-finite loss detected; skipping batch.")
+                print(f"[Warn] Non-finite loss at epoch {epoch} step {step}; skipping batch.")
                 optimizer.zero_grad(set_to_none=True)
                 continue
 
@@ -435,18 +442,14 @@ def main() -> None:
                 stat_np = static.cpu().numpy()
                 stat_scaled = scaler.transform(stat_np, feature_names)
                 stat_slim = slimmer.transform(stat_scaled)
-                static_t = torch.from_numpy(stat_slim).to(device, dtype=dtype_batch)
-                seq = seq.to(device, dtype=dtype_batch)
+                static_t = torch.from_numpy(stat_slim).to(device).float()
+                seq = seq.to(device)
                 if fp16_clamp:
                     static_t = torch.clamp(static_t, min=-fp16_max, max=fp16_max)
                     seq = torch.clamp(seq, min=-fp16_max, max=fp16_max)
-                with (
-                    autocast(dtype=dtype_amp)
-                    if amp_enabled
-                    else nullcontext()
-                ):
+                with (torch.amp.autocast("cuda") if amp_enabled else nullcontext()):
                     logits = model(seq, static_t)["logits"]
-                val_logits.append(logits.detach().cpu().float().numpy())
+                val_logits.append(logits.detach().float().cpu().numpy())
                 val_targets.append(y.cpu().numpy())
         val_logits_np = np.vstack(val_logits)
         if not np.isfinite(val_logits_np).all():
@@ -508,16 +511,12 @@ def main() -> None:
             stat_np = static.cpu().numpy()
             stat_scaled = scaler.transform(stat_np, feature_names)
             stat_slim = slimmer.transform(stat_scaled)
-            static_t = torch.from_numpy(stat_slim).to(device, dtype=dtype_batch)
-            seq = seq.to(device, dtype=dtype_batch)
+            static_t = torch.from_numpy(stat_slim).to(device).float()
+            seq = seq.to(device)
             if fp16_clamp:
                 static_t = torch.clamp(static_t, min=-fp16_max, max=fp16_max)
                 seq = torch.clamp(seq, min=-fp16_max, max=fp16_max)
-            with (
-                autocast(dtype=dtype_amp)
-                if amp_enabled
-                else nullcontext()
-            ):
+            with (torch.amp.autocast("cuda") if amp_enabled else nullcontext()):
                 out = model(seq, static_t)
             full_logits.append(out["logits"].detach().cpu().float())
             full_targets.append(y.cpu())

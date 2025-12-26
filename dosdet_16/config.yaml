@@ -2,8 +2,8 @@ seed: 1337
 
 paths:
   cache_dir: cache
-  artifacts_dir: artifacts
-  reports_dir: reports
+  artifacts_dir: artifacts_fp16
+  reports_dir: reports_fp16
 
 data:
   top_k_udp_ports: [1900, 53, 123, 80, 443]
@@ -44,8 +44,7 @@ training:
   early_stop_patience: 4
   class_weight_pos: 3.0
   cosine_lr: true
-  amp: true                # enable CUDA autocast + GradScaler for fp16
-  fp16: true               # enforce fp16 model/inputs on CUDA
+  amp: true                # enable AMP/FP16 on GPU by default
   fp16_clamp: true         # clamp fp16 inputs to avoid overflow
   dataloader_workers: 0    # single-process loading keeps 2 vCPU machines stable
   pinned_memory: false

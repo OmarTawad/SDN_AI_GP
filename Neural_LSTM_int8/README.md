@@ -1,6 +1,47 @@
-# DoS Detector (Neural_LSTM)
+# DoS Detector (Neural_LSTM_int8, dynamic int8)
 
 This module contains an end-to-end pipeline for detecting Distributed Denial of Service (DoS) activity from PCAP captures using an LSTM-based sequence classifier. The latest iteration shares the exact 1 s / 0.5 s sliding-window features used by the CNN (micro-bin histograms, protocol counts, SSDP tokens) and exposes a single binary head: every downstream score, gate, and attribution is derived from that attack-vs-normal probability. The inference stage highlights the most suspicious MAC and IP addresses observed during an attack, making it easier to pivot from the prediction to actionable remediation.
+
+## Variant Notes (Dynamic int8)
+
+- Dynamic int8 quantization is supported for inference on CPU.
+- Enable it via `quantization.enabled` in `configs/config.yaml` or with `--quantized` CLI flags.
+- Quantized checkpoints are stored under `quantization.checkpoint_path` (set it to `models/supervised_int8_dynamic.pt` for local storage).
+- Run the commands below from the `Neural_LSTM_int8/` directory.
+- These commands assume `configs/config.yaml` uses local paths under this directory (`models/`, `reports/`, `data/processed/`).
+
+## Quick Commands (Quantization)
+
+```bash
+# 1) Train the float model (mixed precision is controlled by precision_mode in config.yaml)
+python3 -m dos_detector.cli train-supervised --config-path configs/config.yaml
+
+# 2) Create a dynamic int8 checkpoint
+python3 scripts/quantize_supervised.py \
+  --config configs/config.yaml \
+  --output models/supervised_int8_dynamic.pt
+
+# 3) Run quantized inference (explicit checkpoint override)
+python3 -m dos_detector.cli infer path/to/capture.pcap \
+  --out reports/prediction.json \
+  --config-path configs/config.yaml \
+  --quantized \
+  --quantized-checkpoint models/supervised_int8_dynamic.pt
+
+# 4) Batch inference with int8
+python3 -m dos_detector.cli batch-infer "pcaps/*.pcap" \
+  --config-path configs/config.yaml \
+  --out-dir reports/int8 \
+  --quantized \
+  --quantized-checkpoint models/supervised_int8_dynamic.pt
+
+# 5) Optional: verify size/latency/accuracy vs float
+python3 scripts/verify_quantization.py \
+  --config configs/config.yaml \
+  --float-checkpoint models/supervised.pt \
+  --int8-checkpoint models/supervised_int8_dynamic.pt \
+  --backend qnnpack
+```
 
 ## Environment Setup
 

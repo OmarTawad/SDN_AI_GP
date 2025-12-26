@@ -18,13 +18,12 @@ import math
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from typing import List, Dict, Tuple
+from contextlib import nullcontext
 
 import numpy as np
 import torch
-from torch.cuda.amp import autocast
 import yaml
 from tqdm import tqdm
-from contextlib import nullcontext
 
 torch.set_num_threads(min(2, max(1, os.cpu_count() or 1)))
 try:
@@ -44,7 +43,7 @@ from decision import DecisionConfig, WindowObs, decide_file
 
 # ------------------------- load artifacts -------------------------
 
-def _load_artifacts(save_dir: str, cfg: dict):
+def _load_artifacts(save_dir: str, cfg: dict, device: torch.device, amp_enabled: bool):
     """
     Returns:
       model (eval mode), scaler, slimmer, meta:dict, calib:dict{"temperature","threshold"}
@@ -76,8 +75,11 @@ def _load_artifacts(save_dir: str, cfg: dict):
         drop=dropout,
         mlp_hidden=mlp_hidden,
     )
-    state = torch.load(os.path.join(save_dir, "model_best.pt"), map_location="cpu")
+    state = torch.load(os.path.join(save_dir, "model_best.pt"), map_location=device)
     model.load_state_dict(state["model"])
+    model.to(device)
+    if amp_enabled:
+        model = model.half()
     model.eval()
 
     # calibration
@@ -291,7 +293,7 @@ def run_on_pcap(
     out_dir: str,
     decid_cfg: DecisionConfig,
     device: torch.device,
-    dtype_model: torch.dtype = torch.float16,
+    amp_enabled: bool,
     fp16_clamp: bool = False,
     fp16_max: float = 65504.0,
 ) -> Tuple[Dict, str, str]:
@@ -299,6 +301,7 @@ def run_on_pcap(
     Streams the pcap, computes features, scores windows, applies robust file-level decision.
     Writes per-window CSV and per-file JSON. Returns (per_file_json, csv_path, json_path).
     """
+    use_amp = bool(amp_enabled and device.type == "cuda")
     os.makedirs(out_dir, exist_ok=True)
 
     # Track per-MAC and per-IP activity for later suspiciousness ranking
@@ -359,23 +362,20 @@ def run_on_pcap(
             stat_slim = slimmer.transform(stat_scaled)
 
             # Tensors
-            seq_t = torch.from_numpy(seq).unsqueeze(0).to(device, non_blocking=True, dtype=dtype_model)
-            static_t = torch.from_numpy(stat_slim).to(device, non_blocking=True, dtype=dtype_model)
-            if fp16_clamp and dtype_model == torch.float16:
+            dtype = torch.float16 if use_amp else torch.float32
+            seq_t = torch.from_numpy(seq).unsqueeze(0).to(device, non_blocking=True, dtype=dtype)
+            static_t = torch.from_numpy(stat_slim).to(device, non_blocking=True, dtype=dtype)
+            if fp16_clamp:
                 seq_t = torch.clamp(seq_t, min=-fp16_max, max=fp16_max)
                 static_t = torch.clamp(static_t, min=-fp16_max, max=fp16_max)
 
             with torch.inference_mode():
-                with (
-                    autocast(dtype=dtype_model)
-                    if device.type == "cuda" and dtype_model == torch.float16
-                    else nullcontext()
-                ):
+                with (torch.autocast(device_type=device.type, dtype=torch.float16) if use_amp else nullcontext()):
                     out = model(seq_t, static_t)
-                    logits_t = out["logits"].squeeze()
-                    logit_T = logits_t / max(float(T), 1e-3)
-                    prob_t = torch.sigmoid(logit_T)
-                    prob = float(prob_t.item())
+                logits_t = out["logits"].squeeze().float()
+                logit_T = logits_t / max(float(T), 1e-3)
+                prob_t = torch.sigmoid(logit_T)
+                prob = float(prob_t.item())
                 max_prob = max(max_prob, prob)
                 # attention (optional)
                 attn = out.get("attn", None)
@@ -611,18 +611,14 @@ def main():
     with open(args.config, "r") as f:
         cfg = yaml.safe_load(f)
 
-    if not torch.cuda.is_available():
-        raise RuntimeError("CUDA device required for GPU inference.")
-    device = torch.device("cuda")
-    use_fp16 = bool(cfg["training"].get("fp16", cfg["training"].get("amp", False)))
-    fp16_clamp = bool(cfg["training"].get("fp16_clamp", True)) and use_fp16
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    amp_enabled = bool(cfg.get("training", {}).get("amp", False) and device.type == "cuda")
+    fp16_clamp = bool(cfg["training"].get("fp16_clamp", True)) and amp_enabled
     fp16_max = float(torch.finfo(torch.float16).max)
-    dtype_model = torch.float16 if use_fp16 else torch.float32
 
     # Load artifacts
     save_dir = cfg["paths"]["artifacts_dir"]
-    model, scaler, slimmer, meta, calib = _load_artifacts(save_dir, cfg)
-    model.to(device=device, dtype=dtype_model)
+    model, scaler, slimmer, meta, calib = _load_artifacts(save_dir, cfg, device, amp_enabled)
     T = float(calib.get("temperature", 1.0))
     tau = float(calib.get("threshold", 0.5))
 
@@ -672,7 +668,7 @@ def main():
             reports_dir,
             dec_cfg,
             device,
-            dtype_model,
+            amp_enabled,
             fp16_clamp,
             fp16_max,
         )
