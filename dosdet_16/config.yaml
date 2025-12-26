@@ -66,7 +66,7 @@ decision:
   high_confidence_override: true
   high_conf_tau: 0.97
   high_conf_windows: 3
-  min_pkts_per_s_for_override: 50.0
+  min_pkts_per_s_for_override: 1.0
 
 preprocess:
   shard_max_mb: 64
