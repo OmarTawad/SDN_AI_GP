@@ -86,8 +86,8 @@ def permutation_importance(
     stat_arr = np.stack(stat_list, axis=0)
 
     stat_slim = _transform_static(scaler, slimmer, stat_arr)
-    seq_tensor = torch.from_numpy(seq_arr).to(device).float()
-    stat_tensor = torch.from_numpy(stat_slim).to(device).float()
+    seq_tensor = torch.from_numpy(seq_arr).to(device=device, dtype=torch.float16)
+    stat_tensor = torch.from_numpy(stat_slim).to(device=device, dtype=torch.float16)
 
     with torch.no_grad():
         logits = model(seq_tensor, stat_tensor)["logits"].squeeze(1)
@@ -97,7 +97,7 @@ def permutation_importance(
     for j in range(stat_slim.shape[1]):
         perturbed = stat_slim.copy()
         rng.shuffle(perturbed[:, j])
-        pert_tensor = torch.from_numpy(perturbed).to(device).float()
+        pert_tensor = torch.from_numpy(perturbed).to(device=device, dtype=torch.float16)
         with torch.no_grad():
             pert_logits = model(seq_tensor, pert_tensor)["logits"].squeeze(1)
             pert_probs = torch.sigmoid(pert_logits).cpu().numpy()
@@ -124,10 +124,10 @@ def save_attention_heatmaps(
             seq, static, *_ , name = ds[idx]
             stat_np = static.numpy().reshape(1, -1)
             stat_slim = _transform_static(scaler, slimmer, stat_np)
-            seq_t = seq.unsqueeze(0).to(device)
-            stat_t = torch.from_numpy(stat_slim).to(device).float()
+            seq_t = seq.unsqueeze(0).to(device=device, dtype=torch.float16)
+            stat_t = torch.from_numpy(stat_slim).to(device=device, dtype=torch.float16)
             out = model(seq_t, stat_t)
-            prob = float(torch.sigmoid(out["logits"]).item())
+            prob = float(torch.sigmoid(out["logits"].float()).item())
             attn = out.get("attn")
             if attn is not None:
                 attn_vec = attn.cpu().numpy().ravel()
@@ -161,8 +161,8 @@ def main() -> None:
         cfg = yaml.safe_load(f)
 
     model, scaler, slimmer, meta = _load_artifacts(cfg)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model.to(device)
+    device = torch.device("cpu")
+    model.to(device=device, dtype=torch.float16)
 
     pcap_glob = args.pcaps or cfg["preprocess"]["pcaps_glob"]
     files = sorted(glob.glob(pcap_glob)) if any(ch in pcap_glob for ch in "*?[]") else [pcap_glob]

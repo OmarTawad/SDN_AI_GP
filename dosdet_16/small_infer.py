@@ -9,7 +9,6 @@ import os
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict
-from contextlib import nullcontext
 
 # Constrain BLAS threads early for 2 vCPU deployments
 os.environ.setdefault("OMP_NUM_THREADS", "2")
@@ -55,7 +54,7 @@ def infer_first_window(
     fp16_clamp: bool,
     fp16_max: float,
 ) -> Dict[str, Any]:
-    use_amp = bool(use_amp and device.type == "cuda")
+    use_amp = bool(use_amp)
     ssdp_v4 = cfg["features"]["ssdp_multicast_ipv4"]
     ssdp_v6 = cfg["features"]["ssdp_multicast_ipv6"]
     top_ports = list(meta.get("top_k_udp_ports", cfg["data"]["top_k_udp_ports"]))
@@ -91,8 +90,7 @@ def infer_first_window(
         static_t = torch.clamp(static_t, min=-fp16_max, max=fp16_max)
 
     with torch.inference_mode():
-        with (torch.autocast(device_type=device.type, dtype=torch.float16) if use_amp else nullcontext()):
-            out = model(seq_t, static_t)
+        out = model(seq_t, static_t)
         logit = float(out["logits"].detach().float().cpu().numpy().ravel()[0])
         attn_peak_bin = None
         attn = out.get("attn")
@@ -140,8 +138,8 @@ def main() -> None:
         raise FileNotFoundError(f"PCAP not found: {pcap_path}")
 
     save_dir = cfg["paths"]["artifacts_dir"]
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    use_amp = bool(cfg.get("training", {}).get("amp", False) and device.type == "cuda")
+    device = torch.device("cpu")
+    use_amp = bool(cfg.get("training", {}).get("fp16_cpu", True))
     model, scaler, slimmer, meta, calib = _load_artifacts(save_dir, cfg, device, use_amp)
     fp16_clamp = bool(cfg["training"].get("fp16_clamp", True)) and use_amp
     fp16_max = float(torch.finfo(torch.float16).max)

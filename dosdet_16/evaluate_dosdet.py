@@ -154,11 +154,10 @@ def _evaluate(
             stat_scaled = scaler.transform(stat_np)
             stat_slim = slimmer.transform(stat_scaled).astype(np.float32)
             static_t = torch.from_numpy(stat_slim).to(device, non_blocking=True)
-            if amp_enabled and device.type == "cuda":
+            if amp_enabled:
                 seq = seq.half()
                 static_t = static_t.half()
-            with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=amp_enabled and device.type == "cuda"):
-                logits = model(seq, static_t)["logits"].squeeze(-1)
+            logits = model(seq, static_t)["logits"].squeeze(-1)
             logits = logits.float() / temperature
             batch_prob = torch.sigmoid(logits).cpu().numpy()
             probs.append(batch_prob)
@@ -199,8 +198,8 @@ def main():
     eval_dir = _resolve_path(args.eval_dir)
     os.makedirs(eval_dir, exist_ok=True)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    amp_enabled = bool(cfg.get("training", {}).get("amp", False) and device.type == "cuda")
+    device = torch.device("cpu")
+    amp_enabled = bool(cfg.get("training", {}).get("fp16_cpu", True))
 
     loader = _build_loader(cfg, batch_size=args.batch_size)
     model, scaler, slimmer, calib = _load_artifacts(artifacts_dir, cfg, device, amp_enabled)

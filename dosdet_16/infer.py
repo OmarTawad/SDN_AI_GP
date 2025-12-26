@@ -18,7 +18,6 @@ import math
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from typing import List, Dict, Tuple
-from contextlib import nullcontext
 
 import numpy as np
 import torch
@@ -303,7 +302,7 @@ def run_on_pcap(
     Streams the pcap, computes features, scores windows, applies robust file-level decision.
     Writes per-window CSV and per-file JSON. Returns (per_file_json, csv_path, json_path).
     """
-    use_amp = bool(amp_enabled and device.type == "cuda")
+    use_fp16 = bool(amp_enabled)
     os.makedirs(out_dir, exist_ok=True)
 
     # Track per-MAC and per-IP activity for later suspiciousness ranking
@@ -364,7 +363,7 @@ def run_on_pcap(
             stat_slim = slimmer.transform(stat_scaled)
 
             # Tensors
-            dtype = torch.float16 if use_amp else torch.float32
+            dtype = torch.float16 if use_fp16 else torch.float32
             seq_t = torch.from_numpy(seq).unsqueeze(0).to(device, non_blocking=True, dtype=dtype)
             static_t = torch.from_numpy(stat_slim).to(device, non_blocking=True, dtype=dtype)
             if fp16_clamp:
@@ -372,8 +371,7 @@ def run_on_pcap(
                 static_t = torch.clamp(static_t, min=-fp16_max, max=fp16_max)
 
             with torch.inference_mode():
-                with (torch.autocast(device_type=device.type, dtype=torch.float16) if use_amp else nullcontext()):
-                    out = model(seq_t, static_t)
+                out = model(seq_t, static_t)
                 logits_t = out["logits"].squeeze().float()
                 logit_T = logits_t / max(float(T), 1e-3)
                 prob_t = torch.sigmoid(logit_T)
@@ -613,8 +611,8 @@ def main():
     with open(args.config, "r") as f:
         cfg = yaml.safe_load(f)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    amp_enabled = bool(cfg.get("training", {}).get("amp", False) and device.type == "cuda")
+    device = torch.device("cpu")
+    amp_enabled = bool(cfg.get("training", {}).get("fp16_cpu", True))
     fp16_clamp = bool(cfg["training"].get("fp16_clamp", True)) and amp_enabled
     fp16_max = float(torch.finfo(torch.float16).max)
 

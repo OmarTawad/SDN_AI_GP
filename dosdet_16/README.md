@@ -22,7 +22,7 @@ Generated artefacts live under `artifacts_fp16/`, cached parquet shards under `c
 
 ## Environment setup
 
-1. Python 3.9+ recommended.
+1. Python 3.9+ recommended. This variant runs CPU-only with FP16 enabled by default.
 2. Create a virtualenv and install dependencies:
    ```bash
    python -m venv .venv
@@ -80,7 +80,7 @@ The `Makefile` reflects the standard flow; the commands below assume you activat
 
 - `paths.cache_dir`, `paths.artifacts_dir`, `paths.reports_dir`: all writable output directories.
 - `windowing` + `data.top_k_udp_ports`: control feature extraction.
-- `training`: tuned for small machines (`batch_size=128`, AMP enabled on GPU, zero worker loaders). Bump `batch_size` / `dataloader_workers` only if you have more CPU.
+- `training`: tuned for small machines (`batch_size=128`, `fp16_cpu: true`, zero worker loaders). Bump `batch_size` / `dataloader_workers` only if you have more CPU.
 - `decision`: hysteresis + plausibility-gate parameters consumed by `infer.py` (and overridable via CLI flags).
 
 Adjust the config once and rely on the Makefile; scripts read everything from the same file.
