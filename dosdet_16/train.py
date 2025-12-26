@@ -49,8 +49,14 @@ def _cuda_supported() -> bool:
         major, minor = torch.cuda.get_device_capability(0)
     except Exception:
         return False
-    # The packaged wheel supports sm_70+. 1050 Ti is sm_61 and will fail kernels.
-    return (major, minor) >= (7, 0)
+    arch = f"sm_{major}{minor}"
+    try:
+        arch_list = torch.cuda.get_arch_list()
+    except Exception:
+        arch_list = []
+    if arch_list:
+        return arch in arch_list
+    return True
 
 
 def _read_parquet(path: str, columns: List[str] | None = None) -> pd.DataFrame:
@@ -342,8 +348,13 @@ def main() -> None:
 
     tr_cfg = cfg["training"]
     use_cuda = _cuda_supported()
-    if tr_cfg.get("amp", False) and not use_cuda:
-        print("[CUDA] GPU unsupported by this torch build; falling back to CPU and disabling AMP.")
+    if not use_cuda:
+        raise RuntimeError(
+            "CUDA FP16 training is required. Install a PyTorch build that supports your GPU "
+            "(e.g., sm_61 for GTX 1050 Ti) and ensure CUDA is available."
+        )
+    if not tr_cfg.get("amp", False):
+        raise RuntimeError("training.amp must be true to enforce FP16 training.")
 
     model = FastDetector(
         seq_in_dim=K_seq,
