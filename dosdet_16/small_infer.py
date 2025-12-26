@@ -34,7 +34,10 @@ try:
 except (AttributeError, RuntimeError):
     pass
 try:
-    torch.backends.nnpack.enabled = False
+    if hasattr(torch.backends.nnpack, "set_flags"):
+        torch.backends.nnpack.set_flags(False)
+    else:
+        torch.backends.nnpack.enabled = False
 except Exception:
     pass
 
