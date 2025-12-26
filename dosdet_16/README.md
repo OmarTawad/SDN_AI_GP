@@ -76,6 +76,39 @@ The `Makefile` reflects the standard flow; the commands below assume you activat
    ```
    The explanation step writes permutation importances (`perm_importance.json`) and attention heatmaps in `reports_fp16/explain/`.
 
+## Export FP32 -> FP16 (post-training)
+
+Why: CPU fp16 training is slower and can hurt AUC on this hardware. The safer flow is to train in FP32, then export a FP16 checkpoint for inference/deployment while preserving the trained weights.
+
+Convert the best FP32 checkpoint to FP16:
+```bash
+python3 - <<'PY'
+import os, torch
+src = "artifacts/model_best.pt"
+dst_dir = "artifacts_fp16"
+os.makedirs(dst_dir, exist_ok=True)
+dst = os.path.join(dst_dir, "model_best.pt")
+
+ckpt = torch.load(src, map_location="cpu")
+ckpt["model"] = {k: (v.half() if torch.is_floating_point(v) else v)
+                 for k, v in ckpt["model"].items()}
+torch.save(ckpt, dst)
+print("Saved fp16 checkpoint to", dst)
+PY
+```
+
+Verify the checkpoint weights are fp16:
+```bash
+python3 - <<'PY'
+import torch
+ckpt = torch.load("artifacts_fp16/model_best.pt", map_location="cpu")
+dtypes = {v.dtype for v in ckpt["model"].values() if torch.is_floating_point(v)}
+print(dtypes)
+PY
+```
+
+Copy the remaining artifacts into `artifacts_fp16/` (scaler/PCA/meta/calibration), then run inference as usual.
+
 ## Configuration highlights (`config.yaml`)
 
 - `paths.cache_dir`, `paths.artifacts_dir`, `paths.reports_dir`: all writable output directories.
