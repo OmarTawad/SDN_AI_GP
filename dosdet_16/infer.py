@@ -80,6 +80,8 @@ def _load_artifacts(save_dir: str, cfg: dict, device: torch.device, amp_enabled:
     model.to(device)
     if amp_enabled:
         model = model.half()
+    else:
+        model = model.float()
     model.eval()
 
     # calibration

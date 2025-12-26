@@ -116,6 +116,8 @@ def _load_artifacts(art_dir: Path, cfg: dict, device: torch.device, amp_enabled:
     model.to(device)
     if amp_enabled:
         model = model.half()
+    else:
+        model = model.float()
     model.eval()
     calib_path = art_dir / "calibration.json"
     if calib_path.exists():

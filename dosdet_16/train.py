@@ -96,6 +96,15 @@ def _read_parquet(path: str, columns: List[str] | None = None) -> pd.DataFrame:
     raise RuntimeError(f"Unable to read parquet file {path} with engines: {tried_str}") from last_exc
 
 
+def _maybe_fp16_state_dict(state: dict, save_fp16: bool) -> dict:
+    if not save_fp16:
+        return state
+    return {
+        k: (v.half() if torch.is_floating_point(v) else v)
+        for k, v in state.items()
+    }
+
+
 class CachedDataset(Dataset):
     """Thin wrapper that streams parquet shards produced by data/preprocess.py."""
 
@@ -465,15 +474,18 @@ def main() -> None:
         improved = early.step(pr)
         artifacts_dir = cfg["paths"]["artifacts_dir"]
         os.makedirs(artifacts_dir, exist_ok=True)
+        save_fp16 = bool(tr_cfg.get("amp", False))
         if improved:
+            ckpt_state = _maybe_fp16_state_dict(model.state_dict(), save_fp16)
             torch.save(
-                {"model": model.state_dict(), "epoch": epoch, "pr": pr},
+                {"model": ckpt_state, "epoch": epoch, "pr": pr},
                 os.path.join(artifacts_dir, "model_best.pt"),
             )
             best_saved = True
         if epoch == 1 and not best_saved:
+            ckpt_state = _maybe_fp16_state_dict(model.state_dict(), save_fp16)
             torch.save(
-                {"model": model.state_dict(), "epoch": epoch, "pr": pr},
+                {"model": ckpt_state, "epoch": epoch, "pr": pr},
                 os.path.join(artifacts_dir, "model_best.pt"),
             )
             best_saved = True
