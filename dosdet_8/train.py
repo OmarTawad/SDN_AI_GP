@@ -317,11 +317,16 @@ def main() -> None:
         drop=tr_cfg["dropout"],
         mlp_hidden=tuple(tr_cfg["mlp_hidden"]),
     )
-    quantizer = Int8Quantizer()
-    convert_module_to_int8(model, quantizer)
-    if not torch.cuda.is_available():
-        raise RuntimeError("CUDA device required for enforced int8-quantized training.")
-    device = torch.device("cuda")
+    int8_quantized = bool(tr_cfg.get("int8_quantized", False))
+    if int8_quantized:
+        quantizer = Int8Quantizer()
+        convert_module_to_int8(model, quantizer)
+        if not torch.cuda.is_available():
+            raise RuntimeError("CUDA device required for enforced int8-quantized training.")
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    use_cuda = device.type == "cuda"
     model.to(device=device, dtype=torch.float32)
 
     criterion = nn.BCEWithLogitsLoss(
@@ -341,7 +346,7 @@ def main() -> None:
     def make_loader(ds, shuffle: bool, workers: int):
         cpu_slots = max(1, os.cpu_count() or 1)
         worker_cap = min(workers, max(0, cpu_slots - 1))
-        pin_mem = bool(tr_cfg.get("pinned_memory", False) and torch.cuda.is_available())
+        pin_mem = bool(tr_cfg.get("pinned_memory", False) and use_cuda)
         return DataLoader(
             ds,
             batch_size=tr_cfg["batch_size"],

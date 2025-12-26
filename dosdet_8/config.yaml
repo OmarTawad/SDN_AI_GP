@@ -43,11 +43,17 @@ training:
   early_stop_patience: 4
   class_weight_pos: 3.0
   cosine_lr: true
-  int8_quantized: true     # enforced CUDA int8 fake-quant pipeline (no CPU fallback)
+  int8_quantized: false    # optional CUDA int8 fake-quant training (legacy path)
   dataloader_workers: 0    # single-process loading keeps 2 vCPU machines stable
   pinned_memory: false
   cudnn_benchmark: true
   grad_clip: 0.0
+
+quantization:
+  enabled: false
+  mode: dynamic
+  backend: null
+  checkpoint_path: artifacts/model_best_int8_dynamic.pt
 
 decision:
   tau_high: 0.7

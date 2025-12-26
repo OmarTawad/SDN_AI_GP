@@ -31,19 +31,27 @@ requirements.txt    # legacy dependencies (use repo-root pyproject.toml)
 
 Generated artefacts live under `artifacts/`, cached parquet shards under `cache/`, and inference reports under `reports/` (all ignored by git).
 
+## Variant Notes (Dynamic int8)
+
+- Dynamic int8 quantization is supported for CPU inference.
+- Enable it via `quantization.enabled` in `config.yaml` or with `--quantized` CLI flags.
+- Quantized checkpoints are stored under `quantization.checkpoint_path` (set it to `artifacts/model_best_int8_dynamic.pt` for local storage).
+- Run the commands below from the `dosdet_8/` directory.
+- These commands assume `config.yaml` uses local paths under this directory (`artifacts/`, `reports/`, `cache/`).
+
 ## Environment setup
 
-1. Python 3.9+ recommended and **CUDA 11.8 GPU is required (CUDA-only int8 fake-quant pipeline, no CPU fallback)**.
+1. Python 3.9+ recommended. CUDA 11.8 GPU is optional (needed only for CUDA fake-quant training or GPU float inference).
 2. Create a virtualenv and install dependencies:
    ```bash
    python -m venv .venv
    source .venv/bin/activate
    pip install -U pip
    pip install -e ..[all]
-   # Install CUDA 11.8 build of PyTorch 2.0.1 (keeps wheels small/fast on GPU)
+   # Optional: install CUDA 11.8 build of PyTorch 2.0.1 (for GPU acceleration)
    pip install --upgrade --extra-index-url https://download.pytorch.org/whl/cu118 torch==2.0.1
    ```
-   Install a CUDA-enabled PyTorch build if you plan to train on GPU (see https://pytorch.org/get-started/locally/). The pipeline is **int8-quantized and CUDA-only**; there is no CPU/float16 fallback.
+   Install a CUDA-enabled PyTorch build only if you plan to train with the CUDA fake-quant path or run float inference on GPU.
 
 All scripts respect the 2 vCPU constraint: BLAS/Torch threads are capped to two, data loaders run single-threaded by default, and every long-running step renders a tqdm progress bar so you can track preprocess/train/infer progress without flooding the terminal.
 
@@ -94,6 +102,31 @@ The `Makefile` reflects the standard flow; the commands below assume you activat
 - `decision`: hysteresis + plausibility-gate parameters consumed by `infer.py` (and overridable via CLI flags).
 
 Adjust the config once and rely on the Makefile; scripts read everything from the same file.
+
+## Quick Commands (Quantization)
+
+```bash
+# 1) Train the float CNN (optional CUDA fake-quant is controlled by training.int8_quantized in config.yaml)
+python3 train.py --config config.yaml
+
+# 2) Create a dynamic int8 checkpoint
+python3 scripts/quantize_supervised.py \
+  --config config.yaml \
+  --output artifacts/model_best_int8_dynamic.pt
+
+# 3) Run quantized inference (explicit checkpoint override)
+python3 infer.py --config config.yaml \
+  --pcaps "samples/*.pcap" \
+  --out reports/int8 \
+  --quantized \
+  --quantized-checkpoint artifacts/model_best_int8_dynamic.pt
+
+# 4) Optional: verify size/latency/accuracy vs float
+python3 scripts/verify_quantization.py \
+  --config config.yaml \
+  --int8-checkpoint artifacts/model_best_int8_dynamic.pt \
+  --backend qnnpack
+```
 
 ## Cleaning up
 

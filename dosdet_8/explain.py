@@ -22,7 +22,7 @@ from data.dataset import WindowDataset, LabelProvider
 from features.scaler import RobustScaler
 from features.feature_slimming import StaticSlimmer
 from models.dws_cnn import FastDetector
-from models.quantization import convert_module_to_int8, Int8Quantizer
+from models.quantization import apply_dynamic_quantization, set_quantized_engine, unpack_checkpoint
 
 torch.set_num_threads(min(2, max(1, os.cpu_count() or 1)))
 try:
@@ -31,7 +31,12 @@ except AttributeError:
     pass
 
 
-def _load_artifacts(cfg: dict) -> Tuple[FastDetector, RobustScaler, StaticSlimmer, dict]:
+def _load_artifacts(
+    cfg: dict,
+    quantized: bool,
+    quantized_checkpoint: str | None,
+    quant_backend: str | None,
+) -> Tuple[FastDetector, RobustScaler, StaticSlimmer, dict]:
     artifacts_dir = cfg["paths"]["artifacts_dir"]
     meta_path = os.path.join(artifacts_dir, "feature_model_meta.json")
     with open(meta_path, "r", encoding="utf-8") as f:
@@ -50,10 +55,31 @@ def _load_artifacts(cfg: dict) -> Tuple[FastDetector, RobustScaler, StaticSlimme
         k=int(meta.get("kernel_size", trn["kernel_size"])),
         drop=float(meta.get("dropout", trn["dropout"])),
         mlp_hidden=tuple(meta.get("mlp_hidden", trn["mlp_hidden"])),
-    )
-    state = torch.load(os.path.join(artifacts_dir, "model_best.pt"), map_location="cpu")
-    model.load_state_dict(state["model"])
-    convert_module_to_int8(model, Int8Quantizer())
+    ).to(device="cpu", dtype=torch.float32)
+    checkpoint_path = os.path.join(artifacts_dir, "model_best.pt")
+    if quantized:
+        cfg_quant = cfg.get("quantization", {}) or {}
+        set_quantized_engine(quant_backend or cfg_quant.get("backend"))
+        candidate = quantized_checkpoint or cfg_quant.get("checkpoint_path")
+        if candidate:
+            candidate = os.path.expanduser(candidate)
+            if os.path.isfile(candidate):
+                checkpoint_path = candidate
+            else:
+                print(f"[warn] quantized checkpoint not found at {candidate}; using float checkpoint.")
+        state = torch.load(checkpoint_path, map_location="cpu")
+        state_dict, is_quantized = unpack_checkpoint(state)
+        if is_quantized:
+            quantized_model = apply_dynamic_quantization(model)
+            quantized_model.load_state_dict(state_dict)
+        else:
+            model.load_state_dict(state_dict)
+            quantized_model = apply_dynamic_quantization(model)
+        model = quantized_model
+    else:
+        state = torch.load(checkpoint_path, map_location="cpu")
+        state_dict, _ = unpack_checkpoint(state)
+        model.load_state_dict(state_dict)
     model.eval()
     return model, scaler, slimmer, meta
 
@@ -158,17 +184,41 @@ def main() -> None:
     parser.add_argument("--out", default=None, help="Output directory (defaults to paths.reports_dir/explain)")
     parser.add_argument("--n-samples", type=int, default=200, help="Windows to sample for permutation importance")
     parser.add_argument("--top-n", type=int, default=10, help="Top windows for attention plots")
+    parser.add_argument(
+        "--quantized",
+        dest="quantized",
+        action="store_true",
+        default=None,
+        help="Enable dynamic int8 quantization for CPU explain runs",
+    )
+    parser.add_argument(
+        "--no-quantized",
+        dest="quantized",
+        action="store_false",
+        default=None,
+        help="Disable dynamic int8 quantization",
+    )
+    parser.add_argument("--quantized-checkpoint", default=None, help="Optional int8 checkpoint override")
+    parser.add_argument("--quant-backend", default=None, help="Quantized backend engine (fbgemm or qnnpack)")
     args = parser.parse_args()
 
     with open(args.config, "r", encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
 
-    if not torch.cuda.is_available():
-        raise RuntimeError("CUDA device required for int8-quantized explain run.")
-    device = torch.device("cuda")
+    cfg_quant = cfg.get("quantization", {}) or {}
+    quantized = bool(cfg_quant.get("enabled", False))
+    if args.quantized is not None:
+        quantized = bool(args.quantized)
+    device = torch.device("cpu" if quantized else ("cuda" if torch.cuda.is_available() else "cpu"))
 
-    model, scaler, slimmer, meta = _load_artifacts(cfg)
-    model.to(device=device, dtype=torch.float32)
+    model, scaler, slimmer, meta = _load_artifacts(
+        cfg,
+        quantized=quantized,
+        quantized_checkpoint=args.quantized_checkpoint,
+        quant_backend=args.quant_backend,
+    )
+    if not quantized:
+        model.to(device=device, dtype=torch.float32)
 
     pcap_glob = args.pcaps or cfg["preprocess"]["pcaps_glob"]
     files = sorted(glob.glob(pcap_glob)) if any(ch in pcap_glob for ch in "*?[]") else [pcap_glob]

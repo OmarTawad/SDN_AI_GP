@@ -119,6 +119,22 @@ def main() -> None:
     ap.add_argument("--micro-bins", type=int, default=None, help="Micro-bins across the window (default: model meta or config)")
     ap.add_argument("--tau", type=float, default=None, help="Optional decision threshold override (default: calibrated threshold)")
     ap.add_argument("--out", default=None, help="Optional directory to write a JSON result")
+    ap.add_argument(
+        "--quantized",
+        dest="quantized",
+        action="store_true",
+        default=None,
+        help="Enable dynamic int8 quantization for CPU inference",
+    )
+    ap.add_argument(
+        "--no-quantized",
+        dest="quantized",
+        action="store_false",
+        default=None,
+        help="Disable dynamic int8 quantization",
+    )
+    ap.add_argument("--quantized-checkpoint", default=None, help="Optional int8 checkpoint override")
+    ap.add_argument("--quant-backend", default=None, help="Quantized backend engine (fbgemm or qnnpack)")
     args = ap.parse_args()
 
     with open(args.config, "r") as f:
@@ -128,13 +144,21 @@ def main() -> None:
     if not os.path.isfile(pcap_path):
         raise FileNotFoundError(f"PCAP not found: {pcap_path}")
 
+    cfg_quant = cfg.get("quantization", {}) or {}
+    quantized = bool(cfg_quant.get("enabled", False))
+    if args.quantized is not None:
+        quantized = bool(args.quantized)
     save_dir = cfg["paths"]["artifacts_dir"]
-    if not torch.cuda.is_available():
-        raise RuntimeError("CUDA device required for int8-quantized inference.")
-
-    model, scaler, slimmer, meta, calib = _load_artifacts(save_dir, cfg)
-    device = torch.device("cuda")
-    model.to(device=device, dtype=torch.float32)
+    model, scaler, slimmer, meta, calib = _load_artifacts(
+        save_dir,
+        cfg,
+        quantized=quantized,
+        quantized_checkpoint=args.quantized_checkpoint,
+        quant_backend=args.quant_backend,
+    )
+    device = torch.device("cpu" if quantized else ("cuda" if torch.cuda.is_available() else "cpu"))
+    if not quantized:
+        model.to(device=device, dtype=torch.float32)
 
     T = float(calib.get("temperature", 1.0))
     tau = float(args.tau if args.tau is not None else calib.get("threshold", 0.5))

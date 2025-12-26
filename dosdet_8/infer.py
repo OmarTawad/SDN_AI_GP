@@ -35,7 +35,7 @@ from data.windowizer import iter_windows
 from features.seq_features import compute_sequence_features
 from features.static_features import compute_static_features
 from features.scaler import RobustScaler
-from models.quantization import convert_module_to_int8, Int8Quantizer
+from models.quantization import apply_dynamic_quantization, set_quantized_engine, unpack_checkpoint
 
 # Robust file-level decision (hysteresis + gate + temporal rules)
 from decision import DecisionConfig, WindowObs, decide_file
@@ -43,7 +43,13 @@ from decision import DecisionConfig, WindowObs, decide_file
 
 # ------------------------- load artifacts -------------------------
 
-def _load_artifacts(save_dir: str, cfg: dict):
+def _load_artifacts(
+    save_dir: str,
+    cfg: dict,
+    quantized: bool,
+    quantized_checkpoint: str | None,
+    quant_backend: str | None,
+):
     """
     Returns:
       model (eval mode), scaler, slimmer, meta:dict, calib:dict{"temperature","threshold"}
@@ -74,10 +80,32 @@ def _load_artifacts(save_dir: str, cfg: dict):
         k=kernel_size,
         drop=dropout,
         mlp_hidden=mlp_hidden,
-    )
-    state = torch.load(os.path.join(save_dir, "model_best.pt"), map_location="cpu")
-    model.load_state_dict(state["model"])
-    convert_module_to_int8(model, Int8Quantizer())
+    ).to(device="cpu", dtype=torch.float32)
+
+    checkpoint_path = os.path.join(save_dir, "model_best.pt")
+    if quantized:
+        cfg_quant = cfg.get("quantization", {}) or {}
+        set_quantized_engine(quant_backend or cfg_quant.get("backend"))
+        candidate = quantized_checkpoint or cfg_quant.get("checkpoint_path")
+        if candidate:
+            candidate = os.path.expanduser(candidate)
+            if os.path.isfile(candidate):
+                checkpoint_path = candidate
+            else:
+                print(f"[warn] quantized checkpoint not found at {candidate}; using float checkpoint.")
+        state = torch.load(checkpoint_path, map_location="cpu")
+        state_dict, is_quantized = unpack_checkpoint(state)
+        if is_quantized:
+            quantized_model = apply_dynamic_quantization(model)
+            quantized_model.load_state_dict(state_dict)
+        else:
+            model.load_state_dict(state_dict)
+            quantized_model = apply_dynamic_quantization(model)
+        model = quantized_model
+    else:
+        state = torch.load(checkpoint_path, map_location="cpu")
+        state_dict, _ = unpack_checkpoint(state)
+        model.load_state_dict(state_dict)
     model.eval()
 
     # calibration
@@ -593,19 +621,44 @@ def main():
     ap.add_argument("--consecutive-required", type=int, default=None)
     ap.add_argument("--cooldown-windows", type=int, default=None)
     ap.add_argument("--disable-gate", action="store_true")
+    ap.add_argument(
+        "--quantized",
+        dest="quantized",
+        action="store_true",
+        default=None,
+        help="Enable dynamic int8 quantization for CPU inference",
+    )
+    ap.add_argument(
+        "--no-quantized",
+        dest="quantized",
+        action="store_false",
+        default=None,
+        help="Disable dynamic int8 quantization",
+    )
+    ap.add_argument("--quantized-checkpoint", default=None, help="Optional int8 checkpoint override")
+    ap.add_argument("--quant-backend", default=None, help="Quantized backend engine (fbgemm or qnnpack)")
     args = ap.parse_args()
 
     with open(args.config, "r") as f:
         cfg = yaml.safe_load(f)
 
-    if not torch.cuda.is_available():
-        raise RuntimeError("CUDA device required for int8-quantized CUDA inference.")
-    device = torch.device("cuda")
+    cfg_quant = cfg.get("quantization", {}) or {}
+    quantized = bool(cfg_quant.get("enabled", False))
+    if args.quantized is not None:
+        quantized = bool(args.quantized)
+    device = torch.device("cpu" if quantized else ("cuda" if torch.cuda.is_available() else "cpu"))
 
     # Load artifacts
     save_dir = cfg["paths"]["artifacts_dir"]
-    model, scaler, slimmer, meta, calib = _load_artifacts(save_dir, cfg)
-    model.to(device=device, dtype=torch.float32)
+    model, scaler, slimmer, meta, calib = _load_artifacts(
+        save_dir,
+        cfg,
+        quantized=quantized,
+        quantized_checkpoint=args.quantized_checkpoint,
+        quant_backend=args.quant_backend,
+    )
+    if not quantized:
+        model.to(device=device, dtype=torch.float32)
     T = float(calib.get("temperature", 1.0))
     tau = float(calib.get("threshold", 0.5))
 

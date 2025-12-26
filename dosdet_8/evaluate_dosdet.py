@@ -19,7 +19,7 @@ from torch.utils.data import DataLoader
 from features.feature_slimming import StaticSlimmer
 from features.scaler import RobustScaler
 from models.dws_cnn import FastDetector
-from models.quantization import convert_module_to_int8, Int8Quantizer
+from models.quantization import apply_dynamic_quantization, set_quantized_engine, unpack_checkpoint
 from train import CachedDataset, collate, load_manifest, _read_parquet
 
 ROOT = Path(__file__).resolve().parent
@@ -84,7 +84,13 @@ def _resolve_artifacts_dir(arg: str | None, cfg: dict) -> Path:
     raise FileNotFoundError("Unable to locate model_best.pt in artifacts/models/checkpoints.")
 
 
-def _load_artifacts(art_dir: Path, cfg: dict):
+def _load_artifacts(
+    art_dir: Path,
+    cfg: dict,
+    quantized: bool,
+    quantized_checkpoint: str | None,
+    quant_backend: str | None,
+):
     scaler = RobustScaler.load(str(art_dir))
     slimmer = StaticSlimmer()
     slimmer.load(str(art_dir))
@@ -98,10 +104,32 @@ def _load_artifacts(art_dir: Path, cfg: dict):
         k=int(meta.get("kernel_size", cfg["training"]["kernel_size"])),
         drop=float(meta.get("dropout", cfg["training"]["dropout"])),
         mlp_hidden=tuple(meta.get("mlp_hidden", cfg["training"]["mlp_hidden"])),
-    )
-    checkpoint = torch.load(art_dir / "model_best.pt", map_location="cpu")
-    model.load_state_dict(checkpoint["model"])
-    convert_module_to_int8(model, Int8Quantizer())
+    ).to(device="cpu", dtype=torch.float32)
+
+    checkpoint_path = art_dir / "model_best.pt"
+    if quantized:
+        cfg_quant = cfg.get("quantization", {}) or {}
+        set_quantized_engine(quant_backend or cfg_quant.get("backend"))
+        candidate = quantized_checkpoint or cfg_quant.get("checkpoint_path")
+        if candidate:
+            candidate_path = _resolve_path(candidate)
+            if candidate_path.is_file():
+                checkpoint_path = candidate_path
+            else:
+                print(f"[warn] quantized checkpoint not found at {candidate_path}; using float checkpoint.")
+        state = torch.load(checkpoint_path, map_location="cpu")
+        state_dict, is_quantized = unpack_checkpoint(state)
+        if is_quantized:
+            quantized_model = apply_dynamic_quantization(model)
+            quantized_model.load_state_dict(state_dict)
+        else:
+            model.load_state_dict(state_dict)
+            quantized_model = apply_dynamic_quantization(model)
+        model = quantized_model
+    else:
+        state = torch.load(checkpoint_path, map_location="cpu")
+        state_dict, _ = unpack_checkpoint(state)
+        model.load_state_dict(state_dict)
     calib_path = art_dir / "calibration.json"
     if calib_path.exists():
         with open(calib_path, "r", encoding="utf-8") as f:
@@ -124,8 +152,11 @@ def _evaluate(
     slimmer: StaticSlimmer,
     calib: Dict[str, float],
     device: torch.device,
+    quantized: bool,
 ) -> Tuple[Dict[str, float | None], np.ndarray, str]:
-    model.to(device=device, dtype=torch.float32).eval()
+    if not quantized:
+        model.to(device=device, dtype=torch.float32)
+    model.eval()
     temperature = float(calib.get("temperature", 1.0)) or 1.0
     threshold = float(calib.get("threshold", 0.5))
 
@@ -171,6 +202,22 @@ def main():
     parser.add_argument("--artifacts", default=None, help="Override artifacts directory.")
     parser.add_argument("--eval-dir", default=str(DEFAULT_EVAL_DIR), help="Where to write eval outputs.")
     parser.add_argument("--batch-size", type=int, default=256, help="Evaluation batch size.")
+    parser.add_argument(
+        "--quantized",
+        dest="quantized",
+        action="store_true",
+        default=None,
+        help="Enable dynamic int8 quantization for CPU evaluation",
+    )
+    parser.add_argument(
+        "--no-quantized",
+        dest="quantized",
+        action="store_false",
+        default=None,
+        help="Disable dynamic int8 quantization",
+    )
+    parser.add_argument("--quantized-checkpoint", default=None, help="Optional int8 checkpoint override")
+    parser.add_argument("--quant-backend", default=None, help="Quantized backend engine (fbgemm or qnnpack)")
     args = parser.parse_args()
 
     cfg = yaml.safe_load(open(_resolve_path(args.config), "r", encoding="utf-8"))
@@ -179,12 +226,19 @@ def main():
     os.makedirs(eval_dir, exist_ok=True)
 
     loader = _build_loader(cfg, batch_size=args.batch_size)
-    model, scaler, slimmer, calib = _load_artifacts(artifacts_dir, cfg)
-    if not torch.cuda.is_available():
-        raise RuntimeError("CUDA device required for int8-quantized evaluation.")
-    device = torch.device("cuda")
-    model = model.to(device=device, dtype=torch.float32)
-    metrics, cm, report = _evaluate(model, loader, scaler, slimmer, calib, device)
+    cfg_quant = cfg.get("quantization", {}) or {}
+    quantized = bool(cfg_quant.get("enabled", False))
+    if args.quantized is not None:
+        quantized = bool(args.quantized)
+    model, scaler, slimmer, calib = _load_artifacts(
+        artifacts_dir,
+        cfg,
+        quantized=quantized,
+        quantized_checkpoint=args.quantized_checkpoint,
+        quant_backend=args.quant_backend,
+    )
+    device = torch.device("cpu" if quantized else ("cuda" if torch.cuda.is_available() else "cpu"))
+    metrics, cm, report = _evaluate(model, loader, scaler, slimmer, calib, device, quantized)
 
     with open(eval_dir / "metrics.json", "w", encoding="utf-8") as f:
         json.dump(metrics, f, indent=2)
