@@ -28,6 +28,10 @@ try:
     torch.set_num_interop_threads(1)
 except AttributeError:
     pass
+try:
+    torch.backends.nnpack.enabled = False
+except Exception:
+    pass
 
 
 def _load_artifacts(cfg: dict) -> Tuple[FastDetector, RobustScaler, StaticSlimmer, dict]:

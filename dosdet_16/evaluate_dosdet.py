@@ -32,6 +32,10 @@ try:
     torch.set_num_interop_threads(1)
 except AttributeError:
     pass
+try:
+    torch.backends.nnpack.enabled = False
+except Exception:
+    pass
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_EVAL_DIR = ROOT / "eval"

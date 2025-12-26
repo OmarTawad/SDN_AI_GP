@@ -32,6 +32,10 @@ try:
     torch.set_num_interop_threads(1)
 except (AttributeError, RuntimeError):
     pass
+try:
+    torch.backends.nnpack.enabled = False
+except Exception:
+    pass
 
 
 def _iso(ts: float) -> str:

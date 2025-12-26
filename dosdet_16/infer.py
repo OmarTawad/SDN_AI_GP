@@ -29,6 +29,10 @@ try:
     torch.set_num_interop_threads(1)
 except AttributeError:
     pass
+try:
+    torch.backends.nnpack.enabled = False
+except Exception:
+    pass
 
 from data.pcap_reader import iter_rows_from_pcap
 from data.windowizer import iter_windows
