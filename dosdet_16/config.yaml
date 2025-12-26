@@ -53,20 +53,20 @@ training:
 
 decision:
   # Balanced defaults: reduce false positives without missing attacks
-  tau_high: 0.97
-  tau_low: 0.90
-  min_attack_windows: 50
-  consecutive_required: 5
+  tau_high: 0.95
+  tau_low: 0.85
+  min_attack_windows: 15
+  consecutive_required: 3
   cooldown_windows: 2
   enable_gate: true
   warmup_windows: 15
   abs_pkts_per_s_cap: 1500.0
   burstiness_multiple: 3.0
   syn_completion_max: 0.1
-  high_confidence_override: false
-  high_conf_tau: 0.98
-  high_conf_windows: 5
-  min_pkts_per_s_for_override: 100.0
+  high_confidence_override: true
+  high_conf_tau: 0.97
+  high_conf_windows: 3
+  min_pkts_per_s_for_override: 50.0
 
 preprocess:
   shard_max_mb: 64
