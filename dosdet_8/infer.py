@@ -35,7 +35,12 @@ from data.windowizer import iter_windows
 from features.seq_features import compute_sequence_features
 from features.static_features import compute_static_features
 from features.scaler import RobustScaler
-from models.quantization import apply_dynamic_quantization, set_quantized_engine, unpack_checkpoint
+from models.quantization import (
+    apply_dynamic_quantization,
+    build_static_fx_model,
+    set_quantized_engine,
+    unpack_checkpoint,
+)
 
 # Robust file-level decision (hysteresis + gate + temporal rules)
 from decision import DecisionConfig, WindowObs, decide_file
@@ -85,7 +90,9 @@ def _load_artifacts(
     checkpoint_path = os.path.join(save_dir, "model_best.pt")
     if quantized:
         cfg_quant = cfg.get("quantization", {}) or {}
-        set_quantized_engine(quant_backend or cfg_quant.get("backend"))
+        mode = str(cfg_quant.get("mode", "dynamic")).lower()
+        backend = quant_backend or cfg_quant.get("backend")
+        set_quantized_engine(backend)
         candidate = quantized_checkpoint or cfg_quant.get("checkpoint_path")
         if candidate:
             candidate = os.path.expanduser(candidate)
@@ -95,13 +102,23 @@ def _load_artifacts(
                 print(f"[warn] quantized checkpoint not found at {candidate}; using float checkpoint.")
         state = torch.load(checkpoint_path, map_location="cpu")
         state_dict, is_quantized = unpack_checkpoint(state)
-        if is_quantized:
-            quantized_model = apply_dynamic_quantization(model)
+        if mode == "static":
+            if not is_quantized:
+                raise RuntimeError("Static quantization requested but checkpoint is not quantized.")
+            micro_bins = int(meta.get("micro_bins", cfg["windowing"]["micro_bins"]))
+            example_seq = torch.zeros((1, micro_bins, seq_in_dim), dtype=torch.float32)
+            example_static = torch.zeros((1, static_dim), dtype=torch.float32)
+            quantized_model = build_static_fx_model(model, (example_seq, example_static), backend)
             quantized_model.load_state_dict(state_dict)
+            model = quantized_model
         else:
-            model.load_state_dict(state_dict)
-            quantized_model = apply_dynamic_quantization(model)
-        model = quantized_model
+            if is_quantized:
+                quantized_model = apply_dynamic_quantization(model)
+                quantized_model.load_state_dict(state_dict)
+            else:
+                model.load_state_dict(state_dict)
+                quantized_model = apply_dynamic_quantization(model)
+            model = quantized_model
     else:
         state = torch.load(checkpoint_path, map_location="cpu")
         state_dict, _ = unpack_checkpoint(state)
@@ -387,13 +404,16 @@ def run_on_pcap(
 
             with torch.inference_mode():
                 out = model(seq_t, static_t)
-                logits_t = out["logits"].squeeze()
+                if isinstance(out, dict):
+                    logits_t = out["logits"].squeeze()
+                    attn = out.get("attn", None)
+                else:
+                    logits_t = out.squeeze()
+                    attn = None
                 logit_T = logits_t / max(float(T), 1e-3)
                 prob_t = torch.sigmoid(logit_T)
                 prob = float(prob_t.item())
                 max_prob = max(max_prob, prob)
-                # attention (optional)
-                attn = out.get("attn", None)
                 if attn is not None:
                     attn = attn.cpu().numpy().ravel()
                     peak_bin = int(np.argmax(attn))

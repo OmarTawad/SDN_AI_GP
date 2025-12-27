@@ -51,7 +51,7 @@ training:
 
 quantization:
   enabled: false
-  mode: dynamic
+  mode: dynamic  # dynamic or static
   backend: null
   checkpoint_path: artifacts/model_best_int8_dynamic.pt
 
