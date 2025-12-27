@@ -227,9 +227,9 @@ def main():
 
     loader = _build_loader(cfg, batch_size=args.batch_size)
     cfg_quant = cfg.get("quantization", {}) or {}
-    quantized = bool(cfg_quant.get("enabled", False))
-    if args.quantized is not None:
-        quantized = bool(args.quantized)
+    quantized = True if args.quantized is None else bool(args.quantized)
+    if not quantized:
+        raise RuntimeError("CPU-only int8 evaluation is enforced; remove --no-quantized.")
     model, scaler, slimmer, calib = _load_artifacts(
         artifacts_dir,
         cfg,
@@ -237,7 +237,7 @@ def main():
         quantized_checkpoint=args.quantized_checkpoint,
         quant_backend=args.quant_backend,
     )
-    device = torch.device("cpu" if quantized else ("cuda" if torch.cuda.is_available() else "cpu"))
+    device = torch.device("cpu")
     metrics, cm, report = _evaluate(model, loader, scaler, slimmer, calib, device, quantized)
 
     with open(eval_dir / "metrics.json", "w", encoding="utf-8") as f:

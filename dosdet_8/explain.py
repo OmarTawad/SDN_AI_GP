@@ -206,10 +206,10 @@ def main() -> None:
         cfg = yaml.safe_load(f)
 
     cfg_quant = cfg.get("quantization", {}) or {}
-    quantized = bool(cfg_quant.get("enabled", False))
-    if args.quantized is not None:
-        quantized = bool(args.quantized)
-    device = torch.device("cpu" if quantized else ("cuda" if torch.cuda.is_available() else "cpu"))
+    quantized = True if args.quantized is None else bool(args.quantized)
+    if not quantized:
+        raise RuntimeError("CPU-only int8 explain is enforced; remove --no-quantized.")
+    device = torch.device("cpu")
 
     model, scaler, slimmer, meta = _load_artifacts(
         cfg,
@@ -217,8 +217,7 @@ def main() -> None:
         quantized_checkpoint=args.quantized_checkpoint,
         quant_backend=args.quant_backend,
     )
-    if not quantized:
-        model.to(device=device, dtype=torch.float32)
+    # Quantized models stay on CPU.
 
     pcap_glob = args.pcaps or cfg["preprocess"]["pcaps_glob"]
     files = sorted(glob.glob(pcap_glob)) if any(ch in pcap_glob for ch in "*?[]") else [pcap_glob]

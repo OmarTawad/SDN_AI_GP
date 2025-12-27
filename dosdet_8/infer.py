@@ -643,10 +643,10 @@ def main():
         cfg = yaml.safe_load(f)
 
     cfg_quant = cfg.get("quantization", {}) or {}
-    quantized = bool(cfg_quant.get("enabled", False))
-    if args.quantized is not None:
-        quantized = bool(args.quantized)
-    device = torch.device("cpu" if quantized else ("cuda" if torch.cuda.is_available() else "cpu"))
+    quantized = True if args.quantized is None else bool(args.quantized)
+    if not quantized:
+        raise RuntimeError("CPU-only int8 inference is enforced; remove --no-quantized.")
+    device = torch.device("cpu")
 
     # Load artifacts
     save_dir = cfg["paths"]["artifacts_dir"]
