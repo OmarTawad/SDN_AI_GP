@@ -5,12 +5,10 @@ import os
 from contextlib import nullcontext
 
 import torch
-from torch.cuda.amp import GradScaler
-torch.backends.cudnn.benchmark = True
-try:
-    torch.set_float32_matmul_precision("high")
-except Exception:
-    pass
+# Force CPU environment settings suitable for strict behavior if needed, 
+# although we will explicitly set device to cpu below.
+torch.backends.cudnn.enabled = False
+torch.backends.cudnn.benchmark = False
 
 from ..utils.progress import progress
 
@@ -33,6 +31,10 @@ from ..utils.io import ensure_dir, load_dataframe, load_json, save_joblib, save_
 from ..utils.logging import configure_logging, get_logger
 from ..utils.seed import seed_everything
 
+# Constants from Neural_LSTM_16_mixedP reference
+LOGIT_CLIP = 20.0
+LOSS_SCALE = 128.0
+
 
 class SupervisedTrainer:
     """Train and evaluate the supervised detector."""
@@ -40,16 +42,18 @@ class SupervisedTrainer:
     def __init__(self, config: Config) -> None:
         self.config = config
         configure_logging()
-        # Deterministic CuBLAS paths on older GPUs can fail; use nondeterministic for speed/compatibility.
-        seed_everything(config.seed, deterministic=False)
-        # Force deterministic algorithms off in case an env var enabled them.
-        torch.use_deterministic_algorithms(False)
+        seed_everything(config.seed, deterministic=True)
+        # Force deterministic algorithms for CPU reproducibility
+        torch.use_deterministic_algorithms(True, warn_only=True)
+        
         self.logger = get_logger(__name__)
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        precision = (config.training.supervised.precision_mode or "").lower()
-        self.amp_dtype = torch.float16 if precision in {"autocast", "fp16", "float16", "amp_fp16", "16"} else None
-        self.use_amp = self.device.type == "cuda" and self.amp_dtype is not None
-        self.scaler = GradScaler(enabled=self.use_amp)
+        
+        # User Requirement: Ditch GPU, use only CPU, force 16-bit
+        self.device = torch.device("cpu")
+        self.torch_dtype = torch.float16
+        self.use_amp = False  # No AMP, pure manual 16-bit logic
+        self.loss_scale = LOSS_SCALE
+        
         ensure_dir(config.paths.models_dir)
         self.manifest = load_json(config.paths.manifest_path)
         self.feature_columns: Sequence[str] = self.manifest.get("feature_columns", [])
@@ -57,8 +61,7 @@ class SupervisedTrainer:
             raise ValueError("Feature manifest is empty. Run extract-features first.")
 
     def _autocast(self):
-        if self.use_amp:
-            return torch.autocast(device_type=self.device.type, dtype=self.amp_dtype)
+        # Neural_LSTM logic: nullcontext if not using AMP
         return nullcontext()
 
     def _load_split(self, files: Sequence[str]) -> List[pd.DataFrame]:
@@ -116,7 +119,7 @@ class SupervisedTrainer:
             shuffle=True,
             num_workers=num_workers,
             collate_fn=collate_fn,
-            pin_memory=True,
+            pin_memory=False, # CPU-only, pinning not needed
             prefetch_factor=prefetch_factor,
             persistent_workers=persistent_workers,
         )
@@ -126,7 +129,7 @@ class SupervisedTrainer:
             shuffle=False,
             num_workers=num_workers,
             collate_fn=collate_fn,
-            pin_memory=True,
+            pin_memory=False,
             prefetch_factor=prefetch_factor,
             persistent_workers=persistent_workers,
         )
@@ -135,15 +138,18 @@ class SupervisedTrainer:
             input_size=len(self.feature_columns),
             num_attack_types=len(self.config.labels.family_mapping),
             config=self.config.model.supervised,
-        ).to(self.device)
+        ).to(device=self.device, dtype=self.torch_dtype)
+
+        # Neural_LSTM logic: use eps=1e-4 for float16
         optimizer = optim.AdamW(
             model.parameters(),
             lr=self.config.training.supervised.learning_rate,
             weight_decay=self.config.training.supervised.weight_decay,
+            eps=1e-4, 
         )
         pos_weight = torch.tensor(
             [self.config.training.supervised.bce_pos_weight],
-            dtype=torch.float32,
+            dtype=self.torch_dtype,
             device=self.device,
         )
 
@@ -193,24 +199,44 @@ class SupervisedTrainer:
         for step, batch in enumerate(progress(loader, desc="Batches (supervised)", unit="batch", leave=False)):
             if max_batches is not None and step >= max_batches:
                 break
-            features = batch["features"].to(self.device, non_blocking=self.use_amp)
-            binary_labels = batch["binary_labels"].to(self.device, non_blocking=self.use_amp)
+            # Logic: Cast inputs to float16 explicitly
+            features = batch["features"].to(self.device, dtype=self.torch_dtype, non_blocking=False)
+            binary_labels = batch["binary_labels"].to(self.device, dtype=self.torch_dtype, non_blocking=False)
+            
+            # Additional check from reference
+            if not torch.isfinite(features).all():
+                features = torch.nan_to_num(features, nan=0.0, posinf=0.0, neginf=0.0)
+
             optimizer.zero_grad(set_to_none=True)
-            with self._autocast():
-                outputs = model(features)
-                binary_loss = F.binary_cross_entropy_with_logits(outputs.window_logits, binary_labels, pos_weight=pos_weight)
-                loss = binary_loss
-            if self.use_amp:
-                self.scaler.scale(loss).backward()
-                self.scaler.unscale_(optimizer)
-                nn.utils.clip_grad_norm_(model.parameters(), self.config.training.supervised.grad_clip)
-                self.scaler.step(optimizer)
-                self.scaler.update()
-            else:
-                loss.backward()
-                nn.utils.clip_grad_norm_(model.parameters(), self.config.training.supervised.grad_clip)
-                optimizer.step()
+            
+            # Logic: No autocast, manual calculation
+            outputs = model(features)
+            
+            # Safe logic clamping from reference
+            logits = torch.nan_to_num(outputs.window_logits, nan=0.0, posinf=LOGIT_CLIP, neginf=-LOGIT_CLIP)
+            logits = torch.clamp(logits, min=-LOGIT_CLIP, max=LOGIT_CLIP)
+
+            # Manual loss calculation in float16
+            loss = F.binary_cross_entropy_with_logits(
+                logits,
+                binary_labels,
+                pos_weight=pos_weight,
+            )
+
+            # Logic: Manual scaling (128.0) and gradient management
+            scaled_loss = loss * self.loss_scale
+            scaled_loss.backward()
+            
+            # Unscale gradients manually
+            for param in model.parameters():
+                if param.grad is not None:
+                    param.grad.data.div_(self.loss_scale)
+            
+            nn.utils.clip_grad_norm_(model.parameters(), self.config.training.supervised.grad_clip)
+            optimizer.step()
+            
             total_loss += float(loss.detach().cpu())
+            
         batches = max(1, min(len(loader), (max_batches or len(loader))))
         return total_loss / batches
 
@@ -223,11 +249,20 @@ class SupervisedTrainer:
             for step, batch in enumerate(progress(loader, desc="Batches (supervised)", unit="batch", leave=False)):
                 if self.config.training.supervised.max_val_batches is not None and step >= self.config.training.supervised.max_val_batches:
                     break
-                features = batch["features"].to(self.device, non_blocking=self.use_amp)
-                binary_labels = batch["binary_labels"].to(self.device, non_blocking=self.use_amp)
-                with self._autocast():
-                    outputs = model(features)
-                probs = torch.sigmoid(outputs.window_logits).cpu().numpy()
+                # Cast to float16
+                features = batch["features"].to(self.device, dtype=self.torch_dtype, non_blocking=False)
+                binary_labels = batch["binary_labels"].to(self.device, dtype=self.torch_dtype, non_blocking=False)
+                
+                if not torch.isfinite(features).all():
+                    features = torch.nan_to_num(features, nan=0.0, posinf=0.0, neginf=0.0)
+
+                outputs = model(features)
+                
+                # Logic: Clamp logits for safety
+                logits = torch.nan_to_num(outputs.window_logits, nan=0.0, posinf=LOGIT_CLIP, neginf=-LOGIT_CLIP)
+                logits = torch.clamp(logits, min=-LOGIT_CLIP, max=LOGIT_CLIP)
+                
+                probs = torch.sigmoid(logits).cpu().numpy().astype(np.float32)
                 labels = binary_labels.cpu().numpy()
                 for i, meta in enumerate(batch["metadata"]):
                     pcap = meta["pcap"]
