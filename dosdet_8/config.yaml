@@ -57,20 +57,20 @@ quantization:
 
 
 decision:
-  tau_high: 0.8
-  tau_low: 0.6
-  min_attack_windows: 200
+  tau_high: 0.9
+  tau_low: 0.7
+  min_attack_windows: 50
   consecutive_required: 3
   cooldown_windows: 1
   enable_gate: true
   warmup_windows: 60
-  abs_pkts_per_s_cap: 2000.0
-  burstiness_multiple: 3.5
+  abs_pkts_per_s_cap: 1800.0
+  burstiness_multiple: 3.0
   syn_completion_max: 0.1
-  high_confidence_override: false
-  high_conf_tau: 0.93
+  high_confidence_override: true
+  high_conf_tau: 0.92
   high_conf_windows: 3
-  min_pkts_per_s_for_override: 3.0
+  min_pkts_per_s_for_override: 10.0
 
 preprocess:
   shard_max_mb: 64
