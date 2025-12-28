@@ -50,10 +50,11 @@ training:
   grad_clip: 0.0
 
 quantization:
-  enabled: false
-  mode: dynamic  # dynamic or static
-  backend: null
-  checkpoint_path: artifacts/model_best_int8_dynamic.pt
+  enabled: true
+  mode: static
+  backend: qnnpack
+  checkpoint_path: artifacts/model_best_int8_static.pt
+
 
 decision:
   tau_high: 0.7
