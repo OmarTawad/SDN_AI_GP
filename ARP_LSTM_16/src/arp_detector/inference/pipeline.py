@@ -42,10 +42,10 @@ class InferencePipeline:
         configure_logging()
         seed_everything(config.seed, deterministic=False)
         self.logger = get_logger(__name__)
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device("cpu")
         precision = (config.training.supervised.precision_mode or "").lower()
-        self.amp_dtype = torch.float16 if precision in {"autocast", "fp16", "float16", "amp_fp16", "16"} else None
-        self.use_amp = self.device.type == "cuda" and self.amp_dtype is not None
+        self.amp_dtype = torch.float16 # Keep float16 dtype for model loading if needed, but run on CPU
+        self.use_amp = False # Force disable AMP on CPU
         self.manifest = load_json(config.paths.manifest_path)
         self.feature_columns: Sequence[str] = self.manifest.get("feature_columns", [])
         if not self.feature_columns:
