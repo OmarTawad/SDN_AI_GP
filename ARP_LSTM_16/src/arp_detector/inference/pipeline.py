@@ -107,7 +107,7 @@ class InferencePipeline:
         features_supervised[self.feature_columns] = self.scaler.transform(frame[self.feature_columns])
 
         sup_dataset = SequenceDataset([features_supervised], self.feature_columns, self.family_mapping, self.config.windowing)
-        sup_loader = DataLoader(sup_dataset, batch_size=1, shuffle=False, collate_fn=collate_fn, num_workers=2, pin_memory=True, prefetch_factor=4, persistent_workers=True)
+        sup_loader = DataLoader(sup_dataset, batch_size=1, shuffle=False, collate_fn=collate_fn, num_workers=2, pin_memory=False, prefetch_factor=4, persistent_workers=True)
 
         window_store = self._run_supervised(frame, sup_loader)
         window_results = self._assemble_results(frame, window_store)
