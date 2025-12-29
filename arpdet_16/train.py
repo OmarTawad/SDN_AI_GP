@@ -40,16 +40,13 @@ except AttributeError:
     pass
 
 
-def _cuda_supported() -> bool:
-    """Return True only if the installed torch build supports the current GPU arch."""
-    if not torch.cuda.is_available():
-        return False
-    try:
-        major, minor = torch.cuda.get_device_capability(0)
-    except Exception:
-        return False
-    # The packaged wheel supports sm_70+. 1050 Ti is sm_61 and will fail kernels.
-    return (major, minor) >= (7, 0)
+def _maybe_fp16_state_dict(state: dict, save_fp16: bool) -> dict:
+    if not save_fp16:
+        return state
+    return {
+        k: (v.half() if torch.is_floating_point(v) else v)
+        for k, v in state.items()
+    }
 
 
 def _read_parquet(path: str, columns: List[str]) -> pd.DataFrame:
@@ -299,9 +296,9 @@ def main() -> None:
     K_static_slim = slimmer.out_dim
 
     tr_cfg = cfg["training"]
-    use_cuda = _cuda_supported()
-    if tr_cfg.get("amp", False) and not use_cuda:
-        print("[CUDA] GPU unsupported by this torch build; falling back to CPU and disabling AMP.")
+    use_fp16 = bool(tr_cfg.get("fp16_cpu", True))
+    if not use_fp16:
+        raise RuntimeError("training.fp16_cpu must be true to enforce CPU FP16 training.")
 
     model = FastDetector(
         seq_in_dim=K_seq,
@@ -311,11 +308,14 @@ def main() -> None:
         drop=tr_cfg["dropout"],
         mlp_hidden=tuple(tr_cfg["mlp_hidden"]),
     )
-    device = torch.device("cuda" if use_cuda else "cpu")
-    model.to(device)
+    device = torch.device("cpu")
+    model.to(device=device, dtype=torch.float16)
+
+    fp16_clamp = bool(tr_cfg.get("fp16_clamp", True)) and use_fp16
+    fp16_max = float(torch.finfo(torch.float16).max)
 
     criterion = nn.BCEWithLogitsLoss(
-        pos_weight=torch.tensor([tr_cfg["class_weight_pos"]], device=device)
+        pos_weight=torch.tensor([tr_cfg["class_weight_pos"]], device=device, dtype=torch.float16)
     )
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=tr_cfg["lr"], weight_decay=tr_cfg["weight_decay"]
@@ -325,22 +325,20 @@ def main() -> None:
         if tr_cfg.get("cosine_lr", False)
         else None
     )
-    amp_enabled = bool(tr_cfg.get("amp", False) and use_cuda)
-    scaler_amp = GradScaler(enabled=amp_enabled)
     grad_clip = float(tr_cfg.get("grad_clip", 0.0) or 0.0)
     accum_steps = max(1, int(tr_cfg.get("grad_accum_steps", 1)))
 
     def make_loader(ds, shuffle: bool, workers: int):
         cpu_slots = max(1, os.cpu_count() or 1)
         worker_cap = min(workers, max(0, cpu_slots - 1))
-        pin_mem = bool(tr_cfg.get("pinned_memory", False) and torch.cuda.is_available())
+        # pin_memory is not useful for CPU-only training
         return DataLoader(
             ds,
             batch_size=tr_cfg["batch_size"],
             shuffle=shuffle,
             collate_fn=collate,
             num_workers=worker_cap,
-            pin_memory=pin_mem,
+            pin_memory=False,
         )
 
     train_loader = make_loader(ds_train, True, tr_cfg["dataloader_workers"])
@@ -354,6 +352,7 @@ def main() -> None:
         model.train()
         optimizer.zero_grad(set_to_none=True)
         running_loss: List[float] = []
+        warned_bad_logits = False
 
         for step, batch in enumerate(
             tqdm(train_loader, desc=f"Epoch {epoch:02d}", unit="batch"),
@@ -363,23 +362,38 @@ def main() -> None:
             stat_np = static.cpu().numpy()
             stat_scaled = scaler.transform(stat_np, feature_names)
             stat_slim = slimmer.transform(stat_scaled)
-            static_t = torch.from_numpy(stat_slim).to(device, non_blocking=True).float()
+            static_t = torch.from_numpy(stat_slim).to(device, non_blocking=True, dtype=torch.float16)
 
-            seq = seq.to(device, non_blocking=True)
-            y = y.to(device)
+            if fp16_clamp:
+                static_t = torch.clamp(static_t, min=-fp16_max, max=fp16_max)
 
-            cast_ctx = torch.amp.autocast("cuda") if amp_enabled else nullcontext()
-            with cast_ctx:
-                out = model(seq, static_t)
-                loss = criterion(out["logits"], y)
+            seq = seq.to(device, non_blocking=True, dtype=torch.float16)
+            if fp16_clamp:
+                seq = torch.clamp(seq, min=-fp16_max, max=fp16_max)
 
-            scaler_amp.scale(loss / accum_steps).backward()
+            y = y.to(device, dtype=torch.float16)
+
+            out = model(seq, static_t)
+            logits = out["logits"]
+            if not torch.isfinite(logits).all():
+                logits = torch.nan_to_num(logits, nan=0.0, posinf=20.0, neginf=-20.0)
+                if not warned_bad_logits:
+                    print("[Warn] Non-finite logits detected; clamping logits for stability.")
+                    warned_bad_logits = True
+            
+            # Compute loss in float32 for stability
+            loss = criterion(logits.float(), y.float())
+
+            if not torch.isfinite(loss):
+                print(f"[Warn] Non-finite loss at epoch {epoch} step {step}; skipping batch.")
+                optimizer.zero_grad(set_to_none=True)
+                continue
+
+            (loss / accum_steps).backward()
             if step % accum_steps == 0 or step == len(train_loader):
                 if grad_clip > 0:
-                    scaler_amp.unscale_(optimizer)
                     nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
-                scaler_amp.step(optimizer)
-                scaler_amp.update()
+                optimizer.step()
                 optimizer.zero_grad(set_to_none=True)
             running_loss.append(loss.item())
 
@@ -391,15 +405,24 @@ def main() -> None:
                 stat_np = static.cpu().numpy()
                 stat_scaled = scaler.transform(stat_np, feature_names)
                 stat_slim = slimmer.transform(stat_scaled)
-                static_t = torch.from_numpy(stat_slim).to(device).float()
-                seq = seq.to(device)
-                with (torch.amp.autocast("cuda") if amp_enabled else nullcontext()):
-                    logits = model(seq, static_t)["logits"]
-                val_logits.append(logits.cpu().numpy())
+                static_t = torch.from_numpy(stat_slim).to(device, dtype=torch.float16)
+                seq = seq.to(device, dtype=torch.float16)
+
+                if fp16_clamp:
+                    static_t = torch.clamp(static_t, min=-fp16_max, max=fp16_max)
+                    seq = torch.clamp(seq, min=-fp16_max, max=fp16_max)
+
+                logits = model(seq, static_t)["logits"]
+                val_logits.append(logits.detach().float().cpu().numpy())
                 val_targets.append(y.cpu().numpy())
+
         val_logits_np = np.vstack(val_logits)
+        if not np.isfinite(val_logits_np).all():
+             val_logits_np = np.nan_to_num(val_logits_np, nan=0.0, posinf=0.0, neginf=0.0)
+
         val_targets_np = np.vstack(val_targets)
-        val_probs = 1.0 / (1.0 + np.exp(-val_logits_np))
+        # Stable sigmoid 
+        val_probs = 1.0 / (1.0 + np.exp(-np.clip(val_logits_np, -50, 50)))
         pr = pr_auc(val_targets_np.ravel(), val_probs.ravel())
         print(f"Epoch {epoch:02d} loss={np.mean(running_loss):.4f} thin-val PR-AUC={pr:.4f}")
         if scheduler:
@@ -408,15 +431,18 @@ def main() -> None:
         improved = early.step(pr)
         artifacts_dir = cfg["paths"]["artifacts_dir"]
         os.makedirs(artifacts_dir, exist_ok=True)
+        save_fp16 = bool(use_fp16)
         if improved:
+            ckpt_state = _maybe_fp16_state_dict(model.state_dict(), save_fp16)
             torch.save(
-                {"model": model.state_dict(), "epoch": epoch, "pr": pr},
+                {"model": ckpt_state, "epoch": epoch, "pr": pr},
                 os.path.join(artifacts_dir, "model_best.pt"),
             )
             best_saved = True
         if epoch == 1 and not best_saved:
+            ckpt_state = _maybe_fp16_state_dict(model.state_dict(), save_fp16)
             torch.save(
-                {"model": model.state_dict(), "epoch": epoch, "pr": pr},
+                {"model": ckpt_state, "epoch": epoch, "pr": pr},
                 os.path.join(artifacts_dir, "model_best.pt"),
             )
             best_saved = True
@@ -454,13 +480,19 @@ def main() -> None:
             stat_np = static.cpu().numpy()
             stat_scaled = scaler.transform(stat_np, feature_names)
             stat_slim = slimmer.transform(stat_scaled)
-            static_t = torch.from_numpy(stat_slim).to(device).float()
-            seq = seq.to(device)
-            with (torch.amp.autocast("cuda") if amp_enabled else nullcontext()):
-                out = model(seq, static_t)
-            full_logits.append(out["logits"].cpu())
+            static_t = torch.from_numpy(stat_slim).to(device, dtype=torch.float16)
+            seq = seq.to(device, dtype=torch.float16)
+            if fp16_clamp:
+                static_t = torch.clamp(static_t, min=-fp16_max, max=fp16_max)
+                seq = torch.clamp(seq, min=-fp16_max, max=fp16_max)
+            out = model(seq, static_t)
+            full_logits.append(out["logits"].detach().cpu().float())
             full_targets.append(y.cpu())
-    full_logits_t = torch.cat(full_logits, dim=0)
+    
+    full_logits_t = torch.cat(full_logits, dim=0).float()
+    if not torch.isfinite(full_logits_t).all():
+        full_logits_t = torch.nan_to_num(full_logits_t, nan=0.0, posinf=0.0, neginf=0.0)
+
     full_targets_t = torch.cat(full_targets, dim=0)
 
     y_np = full_targets_t.numpy().ravel()
@@ -474,7 +506,13 @@ def main() -> None:
         tau = 0.5
     else:
         T = temperature_scale(full_logits_t, full_targets_t, lr=1e-2, steps=200)
-        probs_cal = 1.0 / (1.0 + np.exp(-(full_logits_t.numpy() / max(T, 1e-3))))
+        # Use simple broadcasting, T is usually 1-element tensor or float
+        logits_np = full_logits_t.numpy() / max(T, 1e-3)
+        probs_cal = 1.0 / (1.0 + np.exp(-np.clip(logits_np, -50, 50)))
+        
+        if not np.isfinite(probs_cal).all():
+             probs_cal = np.nan_to_num(probs_cal, nan=0.0, posinf=0.0, neginf=0.0)
+
         tau, best_f1 = find_threshold(y_np, probs_cal.ravel())
         print(f"[Calib] Best F1={best_f1:.4f} at τ={tau:.3f} with T={T:.3f}")
 
