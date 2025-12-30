@@ -165,10 +165,8 @@ def main():
                 print("No windows generated.")
                 continue
             
-            print(f"Generated {len(windows)} windows. Extracting features...")
             # Feature Extraction
             df = f_extractor.extract(windows)
-            print(f"Extracted features shape: {df.shape}")
             
             # We need to extract the feature columns.
             # Convert to float32 numpy
