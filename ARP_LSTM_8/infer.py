@@ -223,9 +223,28 @@ def main():
             # Save Report
             base = os.path.basename(pcap_path)
             out_json = os.path.join(args.out, f"{base}.json")
+            abs_out_json = os.path.abspath(out_json)
             with open(out_json, "w") as f:
                 json.dump(results, f, indent=2)
+            
+            # Summary
+            if results:
+                probs = [r["prob"] for r in results]
+                max_p = max(probs)
+                avg_p = sum(probs) / len(probs)
+                high_conf = sum(1 for p in probs if p > 0.5)
+                decision = "ATTACK" if max_p > 0.5 else "NORMAL" # Simple threshold logic
                 
+                print(f"\n[REPORT] File: {base}")
+                print(f"  Saved to: {abs_out_json}")
+                print(f"  Decision: {decision}")
+                print(f"  Max Probability: {max_p:.4f}")
+                print(f"  Avg Probability: {avg_p:.4f}")
+                print(f"  Suspicious Sequences (>0.5): {high_conf}/{len(probs)}")
+            else:
+                print(f"\n[REPORT] File: {base}")
+                print("  No sequences processed.")
+
         except Exception as e:
             print(f"Failed processing {pcap_path}: {e}")
             import traceback
