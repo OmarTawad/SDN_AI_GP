@@ -192,8 +192,6 @@ def main():
             
             results = []
             
-            print(f"Starting inference on {num_samples} frames with sequence length {seq_len}...")
-            
             for start in tqdm(range(0, num_samples - seq_len + 1, seq_stride), desc="Inference"):
                 end = start + seq_len
                 seq_data = X[start:end] # (seq_len, features)
