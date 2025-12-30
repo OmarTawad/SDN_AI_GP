@@ -165,8 +165,10 @@ def main():
                 print("No windows generated.")
                 continue
             
+            print(f"Generated {len(windows)} windows. Extracting features...")
             # Feature Extraction
             df = f_extractor.extract(windows)
+            print(f"Extracted features shape: {df.shape}")
             
             # We need to extract the feature columns.
             # Convert to float32 numpy
@@ -190,7 +192,9 @@ def main():
             
             results = []
             
-            for start in range(0, num_samples - seq_len + 1, seq_stride):
+            print(f"Starting inference on {num_samples} frames with sequence length {seq_len}...")
+            
+            for start in tqdm(range(0, num_samples - seq_len + 1, seq_stride), desc="Inference"):
                 end = start + seq_len
                 seq_data = X[start:end] # (seq_len, features)
                 
