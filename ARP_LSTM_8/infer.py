@@ -45,6 +45,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
     parser.add_argument("--pcaps", default=None)
+    parser.add_argument("--out", default="reports_fp16")
     parser.add_argument("--threshold", type=float, default=0.5, help="Probability threshold for a window to be suspicious")
     parser.add_argument("--min-positives", type=int, default=2, help="Minimum number of suspicious windows to flag the file as ATTACK")
     args = parser.parse_args()
