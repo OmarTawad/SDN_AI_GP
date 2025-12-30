@@ -45,7 +45,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
     parser.add_argument("--pcaps", default=None)
-    parser.add_argument("--out", default="reports_fp16")
+    parser.add_argument("--threshold", type=float, default=0.5, help="Probability threshold for a window to be suspicious")
+    parser.add_argument("--min-positives", type=int, default=2, help="Minimum number of suspicious windows to flag the file as ATTACK")
     args = parser.parse_args()
 
     # Load Config
@@ -232,15 +233,15 @@ def main():
                 probs = [r["prob"] for r in results]
                 max_p = max(probs)
                 avg_p = sum(probs) / len(probs)
-                high_conf = sum(1 for p in probs if p > 0.5)
-                decision = "ATTACK" if max_p > 0.5 else "NORMAL" # Simple threshold logic
+                high_conf = sum(1 for p in probs if p > args.threshold)
+                decision = "ATTACK" if (high_conf >= args.min_positives) else "NORMAL"
                 
                 print(f"\n[REPORT] File: {base}")
                 print(f"  Saved to: {abs_out_json}")
                 print(f"  Decision: {decision}")
                 print(f"  Max Probability: {max_p:.4f}")
                 print(f"  Avg Probability: {avg_p:.4f}")
-                print(f"  Suspicious Sequences (>0.5): {high_conf}/{len(probs)}")
+                print(f"  Suspicious Sequences (>{args.threshold}): {high_conf}/{len(probs)}")
             else:
                 print(f"\n[REPORT] File: {base}")
                 print("  No sequences processed.")
