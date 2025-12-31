@@ -145,11 +145,16 @@ def main():
     # Attempt to load
     scaler = None
     if os.path.exists(scaler_path):
+         print(f"Loading scaler from {scaler_path}...")
          try:
              import joblib
              scaler = joblib.load(scaler_path)
-         except:
-             pass
+             print("Scaler loaded successfully.")
+         except Exception as e:
+             print(f"Error loading scaler: {e}")
+    else:
+        print(f"Scaler path not found: {scaler_path}")
+        print("WARNING: Running without scaler! Results will be incorrect if model expects scaled inputs.")
 
     os.makedirs(args.out, exist_ok=True)
 
