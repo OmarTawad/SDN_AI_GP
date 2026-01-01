@@ -201,10 +201,10 @@ def main():
                         changes += 1
                         last_ip = ip
                 
-                # THRESHOLD: > 1 change means A -> B -> C or A -> B -> A.
-                # A simple IP renewals (A->B) is 1 change.
-                if changes > 1:
-                    suspect_macs.append(mac)
+                # THRESHOLD: > 5 changes to rule out DHCP renewal (A->B) or minor instability (A->B->A).
+                # Sypthnetic attacks usually constantly spoof.
+                if changes > 5:
+                    suspect_macs.append(f"{mac} ({changes} changes)")
 
             global_spoof_detected = len(suspect_macs) > 0
             
