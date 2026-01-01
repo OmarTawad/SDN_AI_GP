@@ -172,6 +172,20 @@ def main():
                 print("No windows generated.")
                 continue
             
+            # Global Heuristic Scan: One MAC claiming multiple IPs over time
+            mac_to_ips = {}
+            for w in windows:
+                for p in w.packets:
+                    # ARP packets only
+                    if p.arp_opcode in [1, 2] and p.arp_sender_mac and p.arp_sender_ip:
+                         if p.arp_sender_mac not in mac_to_ips:
+                             mac_to_ips[p.arp_sender_mac] = set()
+                         mac_to_ips[p.arp_sender_mac].add(p.arp_sender_ip)
+            
+            # Find MACs that claimed more than 1 distinct IP
+            suspect_macs = [m for m, ips in mac_to_ips.items() if len(ips) > 1]
+            global_spoof_detected = len(suspect_macs) > 0
+            
             # Feature Extraction
             df = f_extractor.extract(windows)
             
@@ -218,22 +232,12 @@ def main():
                     ts_start = df.iloc[start]["window_start"]
                     ts_end = df.iloc[end-1]["window_end"]
                     
-                    # --- HEURISTIC CHECK ---
-                    # User requested specific logic: "ip changing from different ips to the same mac"
-                    # We check the raw features in the DataFrame for this sequence.
-                    # Features: "max_ips_per_mac" (index 21?), "max_claims_per_ip" (index 18?)
-                    # We access by name in df to be safe.
-                    
-                    # Get max values for this sequence
-                    seq_df = df.iloc[start:end]
-                    max_ip_per_mac = seq_df["max_ips_per_mac"].max()
-                    max_claim_per_ip = seq_df["max_claims_per_ip"].max()
-                    
-                    # Heuristic Rule: Rapid IP changing (spoofing) > 1 per window (1.0s)
-                    is_heuristic_attack = (max_ip_per_mac > 1.0) or (max_claim_per_ip > 1.0)
-                    
-                    if is_heuristic_attack:
-                        seq_prob = 1.0 # Override
+                    # --- HEURISTIC CHECK (Global Override) ---
+                    # If global spoof detected, we force prob to 1.0 for reporting consistency
+                    is_hourly_attack = False
+                    if global_spoof_detected:
+                         seq_prob = 1.0
+                         is_hourly_attack = True
                     
                     results.append({
                         "file": str(pcap_path),
@@ -242,9 +246,8 @@ def main():
                         "time_start": float(ts_start),
                         "time_end": float(ts_end),
                         "prob": seq_prob,
-                        "heuristic_trigger": bool(is_heuristic_attack),
-                        "debug_max_ips": float(max_ip_per_mac),
-                        "debug_max_claims": float(max_claim_per_ip)
+                        "heuristic_trigger": bool(is_hourly_attack),
+                        "suspect_macs_count": len(suspect_macs)
                     })
 
             # Save Report
@@ -261,22 +264,33 @@ def main():
                 avg_p = sum(probs) / len(probs)
                 high_conf = sum(1 for p in probs if p > args.threshold)
                 heuristic_count = sum(1 for r in results if r.get("heuristic_trigger", False))
-                decision = "ATTACK" if (high_conf >= args.min_positives) else "NORMAL"
+                
+                # Decision Matrix
+                # 1. If global heuristic triggered -> ATTACK
+                # 2. Else -> Model threshold
+                if global_spoof_detected:
+                     decision = "ATTACK"
+                     reason = f"Global Heuristic (MACs claiming multiple IPs: {len(suspect_macs)})"
+                elif high_conf >= args.min_positives:
+                     decision = "ATTACK"
+                     reason = f"Model Confidence > {args.threshold} in {high_conf} sequences"
+                else:
+                     decision = "NORMAL"
+                     reason = "Thresholds not met"
                 
                 print(f"\n[REPORT] File: {base}")
                 print(f"  Saved to: {abs_out_json}")
                 print(f"  Decision: {decision}")
+                print(f"  Reason: {reason}")
                 print(f"  Max Probability: {max_p:.4f}")
                 print(f"  Avg Probability: {avg_p:.4f}")
                 print(f"  Suspicious Sequences (>{args.threshold}): {high_conf}/{len(probs)}")
                 if heuristic_count > 0:
-                    print(f"  Heuristic Overrides (IP/MAC mismatch): {heuristic_count}")
-                    
+                     print(f"  Heuristic Applied to {heuristic_count} sequences.")
+
             else:
                 print(f"\n[REPORT] File: {base}")
                 print("  No sequences processed.")
-
-        except Exception as e:
             print(f"Failed processing {pcap_path}: {e}")
             import traceback
             traceback.print_exc()
