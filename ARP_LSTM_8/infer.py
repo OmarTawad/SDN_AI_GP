@@ -231,6 +231,32 @@ def main():
             # stride
             num_samples = len(X)
             
+            # Pad if too short
+            if num_samples < seq_len:
+                print(f"Warning: File too short ({num_samples} windows < {seq_len}). Padding with zeros.")
+                pad_amt = seq_len - num_samples
+                # Pad X with zeros
+                X_pad = np.zeros((pad_amt, X.shape[1]), dtype=X.dtype)
+                X = np.concatenate([X, X_pad], axis=0)
+                
+                # We also need to pad metadata to avoid index errors in reporting
+                # We'll just repeat the last metadata or makeup dummy ones
+                last_idx = df.iloc[-1]["window_index"]
+                last_end = df.iloc[-1]["window_end"]
+                
+                # Append dummy rows to df locally for referencing
+                # This is a bit hacky but keeps the loop index logic safe
+                rows = []
+                for i in range(pad_amt):
+                     rows.append({
+                         "window_index": last_idx + i + 1,
+                         "window_start": last_end + i, # dummy time
+                         "window_end": last_end + i + 1
+                     })
+                df = pd.concat([df, pd.DataFrame(rows)], ignore_index=True)
+                
+                num_samples = len(X) # Should be seq_len now
+
             results = []
             
             for start in tqdm(range(0, num_samples - seq_len + 1, seq_stride), desc="Inference"):
