@@ -218,13 +218,33 @@ def main():
                     ts_start = df.iloc[start]["window_start"]
                     ts_end = df.iloc[end-1]["window_end"]
                     
+                    # --- HEURISTIC CHECK ---
+                    # User requested specific logic: "ip changing from different ips to the same mac"
+                    # We check the raw features in the DataFrame for this sequence.
+                    # Features: "max_ips_per_mac" (index 21?), "max_claims_per_ip" (index 18?)
+                    # We access by name in df to be safe.
+                    
+                    # Get max values for this sequence
+                    seq_df = df.iloc[start:end]
+                    max_ip_per_mac = seq_df["max_ips_per_mac"].max()
+                    max_claim_per_ip = seq_df["max_claims_per_ip"].max()
+                    
+                    # Heuristic Rule: Rapid IP changing (spoofing) > 1 per window (1.0s)
+                    is_heuristic_attack = (max_ip_per_mac > 1.0) or (max_claim_per_ip > 1.0)
+                    
+                    if is_heuristic_attack:
+                        seq_prob = 1.0 # Override
+                    
                     results.append({
                         "file": str(pcap_path),
                         "start_index": int(w_idx_start),
                         "end_index": int(w_idx_end),
                         "time_start": float(ts_start),
                         "time_end": float(ts_end),
-                        "prob": seq_prob
+                        "prob": seq_prob,
+                        "heuristic_trigger": bool(is_heuristic_attack),
+                        "debug_max_ips": float(max_ip_per_mac),
+                        "debug_max_claims": float(max_claim_per_ip)
                     })
 
             # Save Report
@@ -240,6 +260,7 @@ def main():
                 max_p = max(probs)
                 avg_p = sum(probs) / len(probs)
                 high_conf = sum(1 for p in probs if p > args.threshold)
+                heuristic_count = sum(1 for r in results if r.get("heuristic_trigger", False))
                 decision = "ATTACK" if (high_conf >= args.min_positives) else "NORMAL"
                 
                 print(f"\n[REPORT] File: {base}")
@@ -248,6 +269,9 @@ def main():
                 print(f"  Max Probability: {max_p:.4f}")
                 print(f"  Avg Probability: {avg_p:.4f}")
                 print(f"  Suspicious Sequences (>{args.threshold}): {high_conf}/{len(probs)}")
+                if heuristic_count > 0:
+                    print(f"  Heuristic Overrides (IP/MAC mismatch): {heuristic_count}")
+                    
             else:
                 print(f"\n[REPORT] File: {base}")
                 print("  No sequences processed.")
