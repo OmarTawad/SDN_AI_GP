@@ -291,6 +291,7 @@ def main():
             else:
                 print(f"\n[REPORT] File: {base}")
                 print("  No sequences processed.")
+        except Exception as e:
             print(f"Failed processing {pcap_path}: {e}")
             import traceback
             traceback.print_exc()
