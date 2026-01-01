@@ -172,18 +172,40 @@ def main():
                 print("No windows generated.")
                 continue
             
-            # Global Heuristic Scan: One MAC claiming multiple IPs over time
-            mac_to_ips = {}
+            # Global Heuristic Scan: Detect Flip-Flopping IPs (one MAC alternating IPs)
+            # Normal: A -> B (1 change). 
+            # Attack: A -> B -> A -> B ... (>1 changes).
+            
+            mac_ip_history = {} # MAC -> list of (ts, ip)
             for w in windows:
                 for p in w.packets:
-                    # ARP packets only
                     if p.arp_opcode in [1, 2] and p.arp_sender_mac and p.arp_sender_ip:
-                         if p.arp_sender_mac not in mac_to_ips:
-                             mac_to_ips[p.arp_sender_mac] = set()
-                         mac_to_ips[p.arp_sender_mac].add(p.arp_sender_ip)
+                         if p.arp_sender_mac not in mac_ip_history:
+                             mac_ip_history[p.arp_sender_mac] = []
+                         # Only append if different from last seen to save memory, 
+                         # or just store minimal info. We need sequence.
+                         # Let's store all for accuracy or just changes.
+                         mac_ip_history[p.arp_sender_mac].append((p.timestamp, p.arp_sender_ip))
             
-            # Find MACs that claimed more than 1 distinct IP
-            suspect_macs = [m for m, ips in mac_to_ips.items() if len(ips) > 1]
+            suspect_macs = []
+            for mac, history in mac_ip_history.items():
+                if not history:
+                    continue
+                # Sort by timestamp (should be sorted already largely, but explicit is good)
+                history.sort(key=lambda x: x[0])
+                
+                changes = 0
+                last_ip = history[0][1]
+                for _, ip in history[1:]:
+                    if ip != last_ip:
+                        changes += 1
+                        last_ip = ip
+                
+                # THRESHOLD: > 1 change means A -> B -> C or A -> B -> A.
+                # A simple IP renewals (A->B) is 1 change.
+                if changes > 1:
+                    suspect_macs.append(mac)
+
             global_spoof_detected = len(suspect_macs) > 0
             
             # Feature Extraction
@@ -270,7 +292,7 @@ def main():
                 # 2. Else -> Model threshold
                 if global_spoof_detected:
                      decision = "ATTACK"
-                     reason = f"Global Heuristic (MACs claiming multiple IPs: {len(suspect_macs)})"
+                     reason = f"Global Heuristic (MACs flip-flopping IPs: {len(suspect_macs)})"
                 elif high_conf >= args.min_positives:
                      decision = "ATTACK"
                      reason = f"Model Confidence > {args.threshold} in {high_conf} sequences"
