@@ -455,13 +455,16 @@ def main():
         
     device = torch.device("cpu") # 8-bit dynamic quant is CPU only
 
+    # Default to qnnpack if not specified, as fbgemm crashes on some vCPUs (Illegal Instruction)
+    backend = args.quant_backend or cfg_quant.get("backend") or "qnnpack"
+
     save_dir = cfg["paths"]["artifacts_dir"]
     model, scaler, slimmer, meta, calib = _load_artifacts(
         save_dir, 
         cfg, 
         quantized=quantized, 
         quantized_checkpoint=args.quantized_checkpoint,
-        quant_backend=args.quant_backend
+        quant_backend=backend
     )
     
     T = float(calib.get("temperature", 1.0))
