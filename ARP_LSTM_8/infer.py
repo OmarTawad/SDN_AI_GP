@@ -70,7 +70,7 @@ def main():
     )
     
     # Check scaler for input dim
-    scaler_path = str(raw_cfg["paths"]["scaler_path"]).replace("../", "") # Adjust for relative if needed. 
+    scaler_path = str(raw_cfg["paths"]["scaler_path"]) # Keep relative path integrity 
     # But user runs from ARP_LSTM_8, config says `../models_int8/feature_scaler_int8.joblib`.
     # We should resolve path relative to config file or CWD.
     # We'll trust python path resolution.
