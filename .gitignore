@@ -26,8 +26,14 @@
 # python junk
 __pycache__/
 *.pyc
+<<<<<<< Updated upstream
 *.venv/
 *venv/
+=======
+.venv/
+lib/
+venv/
+>>>>>>> Stashed changes
 
 # processed datasets / generated windows/hosts files
 **/data/processed/**
