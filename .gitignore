@@ -1,6 +1,7 @@
 # ---- big generated artifacts ----
 **/cache/
 **/cache/**
+**/venv/**
 
 # reports / exports (often huge)
 **/reports/
@@ -25,7 +26,8 @@
 # python junk
 __pycache__/
 *.pyc
-.venv/
+*.venv/
+*venv/
 
 # processed datasets / generated windows/hosts files
 **/data/processed/**
@@ -43,3 +45,4 @@ __pycache__/
 
 
 *.csv
+

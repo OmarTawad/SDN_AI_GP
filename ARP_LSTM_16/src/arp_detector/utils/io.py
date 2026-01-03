@@ -37,7 +37,8 @@ def save_dataframe(path: Path, frame: pd.DataFrame) -> None:
     """Persist a dataframe to Parquet."""
 
     ensure_dir(path.parent)
-    frame.to_parquet(path, index=False)
+    # Force fastparquet to avoid PyArrow illegal instruction on older CPUs
+    frame.to_parquet(path, index=False, engine="fastparquet")
 
 
 def load_dataframe(path: Path) -> pd.DataFrame:

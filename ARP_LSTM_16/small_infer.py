@@ -2,6 +2,7 @@ from __future__ import annotations
 
 # Single-window inference helper for the ARP_LSTM detector.
 # Loads pretrained artifacts, extracts the first 1s window from a PCAP, and reports wall-clock latency.
+# MODIFIED: Forces CPU and Float16 execution.
 
 import argparse
 import json
@@ -42,7 +43,7 @@ def _iso(ts: float) -> str:
     return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def _load_model(cfg, feature_columns: Sequence[str], device: torch.device, use_amp: bool) -> SequenceClassifier:
+def _load_model(cfg, feature_columns: Sequence[str], device: torch.device) -> SequenceClassifier:
     model = SequenceClassifier(
         input_size=len(feature_columns),
         num_attack_types=len(cfg.labels.family_mapping),
@@ -50,8 +51,10 @@ def _load_model(cfg, feature_columns: Sequence[str], device: torch.device, use_a
     ).to(device)
     state = torch.load(cfg.paths.supervised_model_path, map_location=device)
     model.load_state_dict(state)
-    if use_amp:
-        model = model.half()
+    
+    # FORCE 16-bit
+    model = model.half()
+    
     model.eval()
     return model
 
@@ -84,7 +87,6 @@ def infer_single_window(
     model: SequenceClassifier,
     scaler,
     device: torch.device,
-    use_amp: bool,
 ) -> Dict[str, Any]:
     extractor = FeatureExtractor(cfg.feature, cfg.windowing.window_size)
     window = _first_window(pcap_path, cfg.windowing.window_size)
@@ -96,12 +98,13 @@ def infer_single_window(
     feature_vector = np.array([float(row.get(name, 0.0)) for name in feature_columns], dtype=np.float32)
     scaled = scaler.transform(feature_vector.reshape(1, -1)).astype(np.float32, copy=False)
 
-    tensor = torch.from_numpy(scaled).to(device)
+    # FORCE 16-bit input
+    tensor = torch.from_numpy(scaled).to(device, dtype=torch.float16)
     tensor = tensor.unsqueeze(0)  # (batch=1, seq=1, features)
 
     with torch.no_grad():
-        with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=use_amp):
-            outputs = model(tensor)
+        # Removed autocast, pure float16 execution
+        outputs = model(tensor)
         logit = float(outputs.window_logits[0, 0].item())
         prob = float(torch.sigmoid(outputs.window_logits)[0, 0].item())
         attn_peak = None
@@ -154,9 +157,8 @@ def main() -> None:
     if not feature_columns:
         raise ValueError(f"Manifest missing feature_columns → {cfg.paths.manifest_path}")
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    precision = (cfg.training.supervised.precision_mode or "").lower()
-    use_amp = device.type == "cuda" and precision in {"autocast", "fp16", "float16", "amp_fp16", "16"}
+    # FORCE CPU
+    device = torch.device("cpu")
     torch.set_num_threads(min(2, os.cpu_count() or 1))
     try:
         torch.set_num_interop_threads(1)
@@ -164,10 +166,10 @@ def main() -> None:
         pass
 
     scaler = load_joblib(cfg.paths.scaler_path)
-    model = _load_model(cfg, feature_columns, device, use_amp)
+    model = _load_model(cfg, feature_columns, device)
 
     start = time.perf_counter()
-    result = infer_single_window(args.pcap, cfg, feature_columns, model, scaler, device, use_amp)
+    result = infer_single_window(args.pcap, cfg, feature_columns, model, scaler, device)
     result["inference_time_sec"] = round(time.perf_counter() - start, 6)
 
     print(
