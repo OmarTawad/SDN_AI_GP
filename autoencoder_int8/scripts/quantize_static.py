@@ -21,7 +21,11 @@ from dae.config import load_config  # noqa: E402
 from dae.model import build_model  # noqa: E402
 from dae.preprocess import apply_log_transform, replace_invalid, load_feature_list, load_scaler, select_features  # noqa: E402
 from dae.quantization import apply_static_quantization_fx, set_quantized_engine, unpack_checkpoint  # noqa: E402
-from dae.utils_io import read_parquet_batches  # noqa: E402
+
+try:  # optional dependency for safer Parquet streaming on older CPUs
+    import duckdb  # type: ignore
+except Exception:  # pragma: no cover
+    duckdb = None
 
 
 def _resolve_checkpoint(config, checkpoint: str | None) -> Path:
@@ -74,7 +78,7 @@ def _iter_calib_batches(
     upper = {k: float(v) for k, v in clip_bounds.get("upper", {}).items()}
     emitted = 0
     for path in windows_paths:
-        for df in read_parquet_batches(path, batch_size):
+        for df in _iter_parquet_batches(path, batch_size, feature_names):
             if df.empty:
                 continue
             features = select_features(df, feature_names)
@@ -89,6 +93,24 @@ def _iter_calib_batches(
             emitted += 1
             if emitted >= max_batches:
                 return
+
+
+def _iter_parquet_batches(path: Path, rows_per_batch: int, columns: list[str]) -> Iterator:
+    if duckdb is not None:
+        rel = duckdb.read_parquet(str(path))
+        if columns:
+            rel = rel.select(columns)
+        offset = 0
+        while True:
+            chunk = rel.limit(rows_per_batch, offset=offset).df()
+            if chunk.empty:
+                break
+            offset += len(chunk)
+            yield chunk
+        return
+    from dae.utils_io import read_parquet_batches
+
+    yield from read_parquet_batches(path, rows_per_batch)
 
 
 def main() -> None:
