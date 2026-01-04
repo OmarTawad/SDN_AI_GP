@@ -139,6 +139,9 @@ def process_pcap(
     max_packets = int(config.get("extract", "max_packets_per_file", default=0))
     batch_rows = int(config.get("extract", "batch_rows", default=20000))
     progress_every = max(10000, batch_rows)
+    progress_mode = str(config.get("extract", "progress", default="tqdm")).lower()
+    if progress_mode not in {"tqdm", "log", "none"}:
+        progress_mode = "tqdm"
 
     window_manager = SlidingWindowManager(window_seconds=window_seconds, stride_seconds=stride_seconds)
 
@@ -147,6 +150,11 @@ def process_pcap(
     window_counter = 0
 
     reader = RawPcapReader(str(path))
+    pbar = None
+    last_update = 0
+    if progress_mode == "tqdm":
+        total = max_packets if max_packets > 0 else None
+        pbar = tqdm(total=total, desc=f"Scanning {path.name}", unit="pkt", leave=False)
     for packet_counter, (raw_packet, metadata) in enumerate(reader, start=1):
         if max_packets and packet_counter > max_packets:
             break
@@ -162,7 +170,11 @@ def process_pcap(
             on_rows(rows_buffer)
             rows_buffer = []
 
-        if packet_counter % progress_every == 0:
+        if progress_mode == "tqdm":
+            if pbar and (packet_counter - last_update) >= progress_every:
+                pbar.update(packet_counter - last_update)
+                last_update = packet_counter
+        elif progress_mode == "log" and packet_counter % progress_every == 0:
             logger.info(
                 "extract_progress",
                 file=str(path),
@@ -171,6 +183,10 @@ def process_pcap(
             )
 
     reader.close()
+    if pbar:
+        if packet_counter > last_update:
+            pbar.update(packet_counter - last_update)
+        pbar.close()
 
     remaining = list(window_manager.finalize())
     window_counter += len(remaining)
