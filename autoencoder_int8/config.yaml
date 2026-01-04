@@ -82,6 +82,7 @@ train:
 
 quantization:
   enabled: true
+  mode: "dynamic"
   backend: qnnpack
   checkpoint_path: "data/artifacts/model_int8_dynamic.pt"
 

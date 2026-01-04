@@ -17,6 +17,7 @@ from .model import build_model
 from .preprocess import apply_log_transform, replace_invalid, load_feature_list, load_scaler
 from .quantization import (
     apply_dynamic_quantization,
+    build_static_fx_model,
     ensure_quantized_modules,
     normalize_checkpoint_path,
     set_quantized_engine,
@@ -102,18 +103,30 @@ def load_inference_artifacts(config: Config) -> InferenceArtifacts:
     model = build_model(model_config.get("model", {}), input_dim=int(model_config["input_dim"]))
     device, torch_dtype, quant_cfg = _resolve_int8_infer_config(config)
     model.to(device=device, dtype=torch_dtype)
+    mode = str(quant_cfg.get("mode", "dynamic")).lower()
     quant_path = normalize_checkpoint_path(quant_cfg.get("checkpoint_path"))
-    checkpoint = quant_path if (quant_path and quant_path.is_file()) else model_path
-    if quant_path and not quant_path.is_file():
-        get_logger("infer").warning("quantized_checkpoint_missing", path=str(quant_path))
-    state = torch.load(checkpoint, map_location=device)
-    state_dict, is_quantized = unpack_checkpoint(state)
-    if is_quantized:
-        quantized_model = apply_dynamic_quantization(model)
+    if mode == "static":
+        if quant_path is None or not quant_path.is_file():
+            raise FileNotFoundError("Static int8 requires quantization.checkpoint_path to exist.")
+        state = torch.load(quant_path, map_location=device)
+        state_dict, is_quantized = unpack_checkpoint(state)
+        if not is_quantized:
+            raise RuntimeError("Static quantization requested but checkpoint is not quantized.")
+        example_inputs = (torch.zeros((1, int(model_config["input_dim"])), dtype=torch.float32),)
+        quantized_model = build_static_fx_model(model, example_inputs, quant_cfg.get("backend"))
         quantized_model.load_state_dict(state_dict)
     else:
-        model.load_state_dict(state_dict)
-        quantized_model = apply_dynamic_quantization(model)
+        checkpoint = quant_path if (quant_path and quant_path.is_file()) else model_path
+        if quant_path and not quant_path.is_file():
+            get_logger("infer").warning("quantized_checkpoint_missing", path=str(quant_path))
+        state = torch.load(checkpoint, map_location=device)
+        state_dict, is_quantized = unpack_checkpoint(state)
+        if is_quantized:
+            quantized_model = apply_dynamic_quantization(model)
+            quantized_model.load_state_dict(state_dict)
+        else:
+            model.load_state_dict(state_dict)
+            quantized_model = apply_dynamic_quantization(model)
     ensure_quantized_modules(quantized_model)
     quantized_model.eval()
 

@@ -7,6 +7,7 @@ import warnings
 import torch
 from torch import nn
 from torch.ao.quantization.quantization_mappings import get_default_dynamic_quant_module_mappings
+from torch.ao.quantization import get_default_qconfig
 
 SUPPORTED_ENGINES = {"fbgemm", "qnnpack"}
 
@@ -87,6 +88,66 @@ def apply_dynamic_quantization(model: nn.Module, dtype: torch.dtype = torch.qint
     return torch.quantization.quantize_dynamic(model, {nn.Linear}, dtype=dtype, mapping=mapping)
 
 
+def _build_qconfig_mapping(backend: str | None):
+    qconfig = get_default_qconfig(backend or torch.backends.quantized.engine)
+    try:
+        from torch.ao.quantization.qconfig_mapping import QConfigMapping
+    except Exception:  # pragma: no cover - fallback for older PyTorch
+        return {"": qconfig}
+    return QConfigMapping().set_global(qconfig)
+
+
+def _prepare_fx(model: nn.Module, example_inputs):
+    try:
+        from torch.ao.quantization.quantize_fx import prepare_fx
+    except Exception:  # pragma: no cover - fallback for older PyTorch
+        from torch.quantization.quantize_fx import prepare_fx
+    return prepare_fx(model, _build_qconfig_mapping(torch.backends.quantized.engine), example_inputs)
+
+
+def _convert_fx(prepared: nn.Module):
+    try:
+        from torch.ao.quantization.quantize_fx import convert_fx
+    except Exception:  # pragma: no cover - fallback for older PyTorch
+        from torch.quantization.quantize_fx import convert_fx
+    return convert_fx(prepared)
+
+
+def apply_static_quantization_fx(
+    model: nn.Module,
+    example_inputs,
+    calib_batches,
+    backend: str | None,
+) -> nn.Module:
+    """Apply post-training static quantization via FX graph mode."""
+
+    set_quantized_engine(backend)
+    model.eval()
+    prepared = _prepare_fx(model, example_inputs)
+    with torch.no_grad():
+        for batch in calib_batches:
+            if isinstance(batch, (list, tuple)):
+                prepared(*batch)
+            else:
+                prepared(batch)
+    quantized = _convert_fx(prepared)
+    return quantized.eval()
+
+
+def build_static_fx_model(
+    model: nn.Module,
+    example_inputs,
+    backend: str | None,
+) -> nn.Module:
+    """Build a static-quantized FX model without calibration (for loading state_dict)."""
+
+    set_quantized_engine(backend)
+    model.eval()
+    prepared = _prepare_fx(model, example_inputs)
+    quantized = _convert_fx(prepared)
+    return quantized.eval()
+
+
 def quantized_modules_present(model: nn.Module) -> bool:
     candidates = []
     qdynamic = getattr(torch.nn, "quantized", None)
@@ -122,6 +183,8 @@ def normalize_checkpoint_path(path: Path | None) -> Path | None:
 __all__ = [
     "SUPPORTED_ENGINES",
     "apply_dynamic_quantization",
+    "apply_static_quantization_fx",
+    "build_static_fx_model",
     "ensure_quantized_modules",
     "normalize_checkpoint_path",
     "set_quantized_engine",
