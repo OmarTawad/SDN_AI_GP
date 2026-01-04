@@ -171,7 +171,7 @@ def process_pcap(
             rows_buffer = []
 
         if progress_mode == "tqdm":
-            if pbar and (packet_counter - last_update) >= progress_every:
+            if pbar is not None and (packet_counter - last_update) >= progress_every:
                 pbar.update(packet_counter - last_update)
                 last_update = packet_counter
         elif progress_mode == "log" and packet_counter % progress_every == 0:
@@ -183,7 +183,7 @@ def process_pcap(
             )
 
     reader.close()
-    if pbar:
+    if pbar is not None:
         if packet_counter > last_update:
             pbar.update(packet_counter - last_update)
         pbar.close()
