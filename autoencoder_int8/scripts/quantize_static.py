@@ -78,9 +78,14 @@ def _iter_calib_batches(
     upper = {k: float(v) for k, v in clip_bounds.get("upper", {}).items()}
     emitted = 0
     for path in windows_paths:
-        for df in _iter_parquet_batches(path, batch_size, feature_names):
+        for df in _iter_parquet_batches(path, batch_size):
             if df.empty:
                 continue
+            missing = [col for col in feature_names if col not in df.columns]
+            if len(missing) == len(feature_names):
+                continue
+            for col in missing:
+                df[col] = 0.0
             features = select_features(df, feature_names)
             features = apply_log_transform(features, log_features)
             if lower:
@@ -95,11 +100,9 @@ def _iter_calib_batches(
                 return
 
 
-def _iter_parquet_batches(path: Path, rows_per_batch: int, columns: list[str]) -> Iterator:
+def _iter_parquet_batches(path: Path, rows_per_batch: int) -> Iterator:
     if duckdb is not None:
         rel = duckdb.read_parquet(str(path))
-        if columns:
-            rel = rel.select(columns)
         offset = 0
         while True:
             chunk = rel.limit(rows_per_batch, offset=offset).df()
@@ -163,7 +166,7 @@ def main() -> None:
         )
     )
     if not calib_batches:
-        raise RuntimeError("No calibration batches were collected.")
+        raise RuntimeError("No calibration batches were collected; check --windows points to autoencoder parquet files.")
 
     example_inputs = calib_batches[0]
     quantized = apply_static_quantization_fx(model, example_inputs, calib_batches, backend)
