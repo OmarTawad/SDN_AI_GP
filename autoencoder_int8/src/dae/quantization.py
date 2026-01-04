@@ -166,11 +166,13 @@ def quantized_modules_present(model: nn.Module) -> bool:
             return True
         if "Quantized" in type(module).__name__:
             return True
+        if "quantized" in type(module).__module__:
+            return True
     return False
 
 
 def ensure_quantized_modules(model: nn.Module) -> None:
-    if not quantized_modules_present(model):
+    if not quantized_modules_present(model) and not state_dict_is_quantized(model.state_dict()):
         raise RuntimeError("Int8 quantization failed; no quantized modules detected.")
 
 
