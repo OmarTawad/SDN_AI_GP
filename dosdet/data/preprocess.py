@@ -13,15 +13,36 @@ import pandas as pd
 import yaml
 from tqdm import tqdm
 
-import pyarrow as pa
-import pyarrow.parquet as pq
-
 from data.pcap_reader import iter_rows_from_pcap
 from data.windowizer import iter_windows
 from features.seq_features import compute_sequence_features
 from features.static_features import compute_static_features
 
 def ensure_dir(p): os.makedirs(p, exist_ok=True)
+
+def _pick_parquet_engine() -> str:
+    override = os.environ.get("DOSDET_PARQUET_ENGINE", "").strip().lower()
+    candidates = [override] if override else []
+    candidates.extend(["fastparquet", "pyarrow"])
+    seen = set()
+    for engine in candidates:
+        if not engine or engine in seen:
+            continue
+        seen.add(engine)
+        if engine == "fastparquet":
+            try:
+                import fastparquet  # noqa: F401
+                return engine
+            except Exception:
+                continue
+        if engine == "pyarrow":
+            try:
+                import pyarrow  # noqa: F401
+                return engine
+            except Exception:
+                continue
+    tried = ", ".join(seen) or "fastparquet, pyarrow"
+    raise RuntimeError(f"No usable parquet engine found. Tried: {tried}. Install fastparquet or pyarrow.")
 
 def _labels_map(labels_csv: str):
     labs = pd.read_csv(labels_csv).fillna("")
@@ -58,59 +79,98 @@ def preprocess(cfg: dict, pcaps_glob: str, labels_csv: str):
     files = sorted(glob.glob(pcaps_glob))
     assert files, f"No pcaps matched: {pcaps_glob}"
 
-    # Arrow schema (list columns for seq/static)
-    schema = pa.schema([
-        ("file", pa.string()),
-        ("t0", pa.float64()),
-        ("t1", pa.float64()),
-        ("y", pa.int32()),
-        ("fam", pa.int32()),
-        ("M", pa.int32()),
-        ("K_seq", pa.int32()),
-        ("K_static", pa.int32()),
-        ("seq", pa.list_(pa.float32())),
-        ("static", pa.list_(pa.float32())),
-    ])
+    engine = _pick_parquet_engine()
+    if engine == "pyarrow":
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+        schema = pa.schema([
+            ("file", pa.string()),
+            ("t0", pa.float64()),
+            ("t1", pa.float64()),
+            ("y", pa.int32()),
+            ("fam", pa.int32()),
+            ("M", pa.int32()),
+            ("K_seq", pa.int32()),
+            ("K_static", pa.int32()),
+            ("seq", pa.list_(pa.float32())),
+            ("static", pa.list_(pa.float32())),
+        ])
+    else:
+        import fastparquet
+        schema = None
 
     # Streaming state
     shard_id = 0
-    shard_writer: pq.ParquetWriter | None = None
+    shard_writer = None
     shard_path = None
     bytes_written_in_shard = 0
+    rows_written_in_shard = 0
 
     # Batch buffers (to keep memory bounded)
     BATCH_ROWS = 5000
     buf = {k: [] for k in ["file","t0","t1","y","fam","M","K_seq","K_static","seq","static"]}
 
     def _open_new_shard():
-        nonlocal shard_id, shard_writer, shard_path, bytes_written_in_shard
+        nonlocal shard_id, shard_writer, shard_path, bytes_written_in_shard, rows_written_in_shard
         shard_path = os.path.join(cache_dir, f"shard_{shard_id:05d}.parquet")
-        shard_writer = pq.ParquetWriter(shard_path, schema, compression="zstd")
+        if engine == "pyarrow":
+            shard_writer = pq.ParquetWriter(shard_path, schema, compression="zstd")
+        else:
+            shard_writer = None
+            if os.path.exists(shard_path):
+                os.remove(shard_path)
         bytes_written_in_shard = 0
+        rows_written_in_shard = 0
         shard_id += 1
 
     def _flush_batch():
-        nonlocal shard_writer, bytes_written_in_shard
+        nonlocal shard_writer, bytes_written_in_shard, rows_written_in_shard
         if not buf["file"]:
             return 0
-        table = pa.table({
-            "file": pa.array(buf["file"], type=pa.string()),
-            "t0": pa.array(buf["t0"], type=pa.float64()),
-            "t1": pa.array(buf["t1"], type=pa.float64()),
-            "y": pa.array(buf["y"], type=pa.int32()),
-            "fam": pa.array(buf["fam"], type=pa.int32()),
-            "M": pa.array(buf["M"], type=pa.int32()),
-            "K_seq": pa.array(buf["K_seq"], type=pa.int32()),
-            "K_static": pa.array(buf["K_static"], type=pa.int32()),
-            "seq": pa.array(buf["seq"], type=pa.list_(pa.float32())),
-            "static": pa.array(buf["static"], type=pa.list_(pa.float32())),
-        })
-        shard_writer.write_table(table)
-        # rough estimate using total bytes in this table
-        est = table.nbytes
+        if engine == "pyarrow":
+            table = pa.table({
+                "file": pa.array(buf["file"], type=pa.string()),
+                "t0": pa.array(buf["t0"], type=pa.float64()),
+                "t1": pa.array(buf["t1"], type=pa.float64()),
+                "y": pa.array(buf["y"], type=pa.int32()),
+                "fam": pa.array(buf["fam"], type=pa.int32()),
+                "M": pa.array(buf["M"], type=pa.int32()),
+                "K_seq": pa.array(buf["K_seq"], type=pa.int32()),
+                "K_static": pa.array(buf["K_static"], type=pa.int32()),
+                "seq": pa.array(buf["seq"], type=pa.list_(pa.float32())),
+                "static": pa.array(buf["static"], type=pa.list_(pa.float32())),
+            })
+            shard_writer.write_table(table)
+            est = table.nbytes
+            bytes_written_in_shard += est
+            rows_written_in_shard += table.num_rows
+        else:
+            seq_vals = [np.asarray(v, dtype=np.float32).tolist() for v in buf["seq"]]
+            static_vals = [np.asarray(v, dtype=np.float32).tolist() for v in buf["static"]]
+            df = pd.DataFrame({
+                "file": buf["file"],
+                "t0": buf["t0"],
+                "t1": buf["t1"],
+                "y": buf["y"],
+                "fam": buf["fam"],
+                "M": buf["M"],
+                "K_seq": buf["K_seq"],
+                "K_static": buf["K_static"],
+                "seq": seq_vals,
+                "static": static_vals,
+            })
+            fastparquet.write(
+                shard_path,
+                df,
+                append=os.path.exists(shard_path),
+                compression=None,
+                object_encoding="json",
+            )
+            bytes_written_in_shard = os.path.getsize(shard_path)
+            rows_written_in_shard += len(df)
+            est = bytes_written_in_shard
         # clear buffers
         for k in buf: buf[k].clear()
-        bytes_written_in_shard += est
         return est
 
     # Open first shard
@@ -156,11 +216,13 @@ def preprocess(cfg: dict, pcaps_glob: str, labels_csv: str):
             # Rotate shard if size exceeds limit
             if bytes_written_in_shard >= shard_max_mb * 1024 * 1024:
                 # finalize current shard
-                shard_writer.close()
-                manifest["files"].append({"path": shard_path})
-                # persist manifest incrementally (crash-safe)
-                with open(manifest_path, "w") as f:
-                    json.dump(manifest, f, indent=2)
+                if engine == "pyarrow" and shard_writer is not None:
+                    shard_writer.close()
+                if rows_written_in_shard > 0:
+                    manifest["files"].append({"path": shard_path})
+                    # persist manifest incrementally (crash-safe)
+                    with open(manifest_path, "w") as f:
+                        json.dump(manifest, f, indent=2)
                 # open next shard
                 _open_new_shard()
 
@@ -170,8 +232,9 @@ def preprocess(cfg: dict, pcaps_glob: str, labels_csv: str):
     if buf["file"]:
         _flush_batch()
     # Close last shard
-    if shard_writer is not None:
+    if engine == "pyarrow" and shard_writer is not None:
         shard_writer.close()
+    if rows_written_in_shard > 0:
         manifest["files"].append({"path": shard_path})
 
     with open(manifest_path, "w") as f:
