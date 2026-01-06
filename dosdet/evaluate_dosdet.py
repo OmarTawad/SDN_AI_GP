@@ -30,7 +30,7 @@ def _resolve_path(path: str | Path) -> Path:
     return p if p.is_absolute() else (ROOT / p)
 
 
-def _test_paths(cfg: dict) -> List[str]:
+def _split_shards(cfg: dict) -> Dict[str, List[Dict[str, int | str]]]:
     cache_dir = _resolve_path(cfg["paths"]["cache_dir"])
     manifest = load_manifest(str(cache_dir))
     shard_rel = [entry["path"] for entry in manifest.get("files", [])]
@@ -40,8 +40,9 @@ def _test_paths(cfg: dict) -> List[str]:
     stats = []
     for rel in shard_rel:
         path = _resolve_path(rel)
-        pos = int(_read_parquet(path, columns=["y"])["y"].sum())
-        stats.append({"path": str(path), "pos": pos})
+        dfy = _read_parquet(path, columns=["y"])
+        pos = int(dfy["y"].sum())
+        stats.append({"path": str(path), "pos": pos, "n": int(len(dfy))})
     stats.sort(key=lambda s: (-s["pos"], s["path"]))
 
     f_train, f_val, _ = cfg["split"]["train_val_test"]
@@ -63,7 +64,46 @@ def _test_paths(cfg: dict) -> List[str]:
             pool[pool.index(donor)] = buckets[1][0]
             buckets[1][0] = donor
 
-    return [s["path"] for s in buckets[2]]
+    return {"train": buckets[0], "val": buckets[1], "test": buckets[2]}
+
+
+def _select_eval_paths(cfg: dict, split: str) -> Tuple[List[str], str]:
+    buckets = _split_shards(cfg)
+    split = split.lower()
+    if split not in buckets:
+        raise ValueError(f"Unknown split '{split}'. Expected one of {sorted(buckets)}.")
+
+    def _stats(name: str) -> Tuple[int, int]:
+        shards = buckets[name]
+        total = int(sum(s["n"] for s in shards))
+        pos = int(sum(s["pos"] for s in shards))
+        return total, pos
+
+    def _has_both(name: str) -> bool:
+        total, pos = _stats(name)
+        return total > 0 and 0 < pos < total
+
+    preferred = split
+    if _has_both(preferred):
+        return [s["path"] for s in buckets[preferred]], preferred
+
+    for candidate in ["val", "train", "test"]:
+        if candidate == preferred:
+            continue
+        if _has_both(candidate):
+            total, pos = _stats(preferred)
+            print(
+                f"[Eval] Requested split='{preferred}' has single class "
+                f"(pos={pos}, total={total}); falling back to '{candidate}'."
+            )
+            return [s["path"] for s in buckets[candidate]], candidate
+
+    total, pos = _stats(preferred)
+    print(
+        f"[Eval] Warning: split='{preferred}' has single class (pos={pos}, total={total}) "
+        "and no other split contains both classes. Metrics may be degenerate."
+    )
+    return [s["path"] for s in buckets[preferred]], preferred
 
 
 def _resolve_artifacts_dir(arg: str | None, cfg: dict) -> Path:
@@ -109,8 +149,8 @@ def _load_artifacts(art_dir: Path, cfg: dict):
     return model, scaler, slimmer, calib
 
 
-def _build_loader(cfg: dict, batch_size: int) -> DataLoader:
-    dataset = CachedDataset(_test_paths(cfg), normal_subsample_rate=1.0)
+def _build_loader(paths: List[str], cfg: dict, batch_size: int) -> DataLoader:
+    dataset = CachedDataset(paths, normal_subsample_rate=1.0)
     num_workers = max(0, cfg["training"].get("dataloader_workers", 0))
     return DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, collate_fn=collate)
 
@@ -168,6 +208,7 @@ def main():
     parser.add_argument("--artifacts", default=None, help="Override artifacts directory.")
     parser.add_argument("--eval-dir", default=str(DEFAULT_EVAL_DIR), help="Where to write eval outputs.")
     parser.add_argument("--batch-size", type=int, default=256, help="Evaluation batch size.")
+    parser.add_argument("--split", default="test", choices=["train", "val", "test"], help="Dataset split to evaluate.")
     args = parser.parse_args()
 
     cfg = yaml.safe_load(open(_resolve_path(args.config), "r", encoding="utf-8"))
@@ -175,10 +216,12 @@ def main():
     eval_dir = _resolve_path(args.eval_dir)
     os.makedirs(eval_dir, exist_ok=True)
 
-    loader = _build_loader(cfg, batch_size=args.batch_size)
+    eval_paths, eval_split = _select_eval_paths(cfg, args.split)
+    loader = _build_loader(eval_paths, cfg, batch_size=args.batch_size)
     model, scaler, slimmer, calib = _load_artifacts(artifacts_dir, cfg)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     metrics, cm, report = _evaluate(model, loader, scaler, slimmer, calib, device)
+    metrics["split"] = eval_split
 
     with open(eval_dir / "metrics.json", "w", encoding="utf-8") as f:
         json.dump(metrics, f, indent=2)
