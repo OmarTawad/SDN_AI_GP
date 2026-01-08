@@ -31,8 +31,29 @@ class InferencePipeline:
         self.config = config
         configure_logging()
         seed_everything(config.seed, deterministic=False)
+        self.device = self._select_device(config.device if hasattr(config, "device") else "auto")
         self.logger = get_logger(__name__)
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    def _select_device(self, requested: str) -> torch.device:
+        if requested == "cpu":
+            return torch.device("cpu")
+        if requested == "cuda":
+            if not torch.cuda.is_available():
+                self.logger.warning("CUDA requested but not available. Falling back to CPU.", extra={"markup": True})
+                return torch.device("cpu")
+            return torch.device("cuda")
+        
+        # Auto mode
+        if not torch.cuda.is_available():
+            return torch.device("cpu")
+            
+        try:
+            # Test CUDA capability
+            torch.zeros(1).to("cuda")
+            return torch.device("cuda")
+        except RuntimeError as e:
+            self.logger.warning(f"CUDA available but failed sanity check (likely version mismatch): {e}. Falling back to CPU.", extra={"markup": True})
+            return torch.device("cpu")
         self.manifest = load_json(config.paths.manifest_path)
         self.feature_columns: Sequence[str] = self.manifest.get("feature_columns", [])
         if not self.feature_columns:

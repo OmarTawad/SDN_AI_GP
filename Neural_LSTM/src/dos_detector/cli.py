@@ -73,10 +73,12 @@ def infer(
     pcap: Path = typer.Argument(..., help="Path to PCAP file"),
     out: Path = typer.Option(Path("reports/prediction.json"), help="Output JSON path"),
     config_path: Path = typer.Option(Path("configs/config.yaml"), help="Configuration path"),
+    device: str = typer.Option("auto", help="Device execution strategy (auto, cpu, cuda)"),
 ) -> None:
     """Run inference on a single PCAP."""
 
     config = load_config(config_path)
+    config.device = device
     pipeline = InferencePipeline(config)
     report = pipeline.infer(pcap)
     ensure_dir(out.parent)
@@ -90,10 +92,12 @@ def batch_infer(
     pcaps: str = typer.Argument(..., help="Glob pattern for PCAP files"),
     out_dir: Path = typer.Option(Path("reports"), help="Directory for JSON reports"),
     config_path: Path = typer.Option(Path("configs/config.yaml"), help="Configuration path"),
+    device: str = typer.Option("auto", help="Device execution strategy (auto, cpu, cuda)"),
 ) -> None:
     """Run inference on multiple PCAPs."""
 
     config = load_config(config_path)
+    config.device = device
     pipeline = InferencePipeline(config)
     ensure_dir(out_dir)
     for path in _resolve_pcaps(pcaps):

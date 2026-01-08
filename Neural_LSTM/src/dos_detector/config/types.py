@@ -149,6 +149,7 @@ class Config:
     postprocessing: PostProcessingConfig
     explainability: ExplainabilityConfig
     live: LiveConfig
+    device: str = "auto"
 
 
 @dataclass
