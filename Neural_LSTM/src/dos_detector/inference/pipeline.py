@@ -34,6 +34,16 @@ class InferencePipeline:
         self.device = self._select_device(config.device if hasattr(config, "device") else "auto")
         self.logger = get_logger(__name__)
 
+        self.manifest = load_json(config.paths.manifest_path)
+        self.feature_columns: Sequence[str] = self.manifest.get("feature_columns", [])
+        if not self.feature_columns:
+            raise ValueError("Feature manifest missing. Run extract-features first.")
+        self.family_mapping = config.labels.family_mapping
+        self.supervised_model = self._load_supervised_model()
+        self.scaler = load_joblib(config.paths.scaler_path)
+        self.gate = DecisionGate(config.postprocessing)
+        self.feature_pipeline = FeaturePipeline(config)
+
     def _select_device(self, requested: str) -> torch.device:
         if requested == "cpu":
             return torch.device("cpu")
@@ -54,15 +64,6 @@ class InferencePipeline:
         except RuntimeError as e:
             self.logger.warning(f"CUDA available but failed sanity check (likely version mismatch): {e}. Falling back to CPU.", extra={"markup": True})
             return torch.device("cpu")
-        self.manifest = load_json(config.paths.manifest_path)
-        self.feature_columns: Sequence[str] = self.manifest.get("feature_columns", [])
-        if not self.feature_columns:
-            raise ValueError("Feature manifest missing. Run extract-features first.")
-        self.family_mapping = config.labels.family_mapping
-        self.supervised_model = self._load_supervised_model()
-        self.scaler = load_joblib(config.paths.scaler_path)
-        self.gate = DecisionGate(config.postprocessing)
-        self.feature_pipeline = FeaturePipeline(config)
 
     def _load_supervised_model(self) -> SequenceClassifier:
         model = SequenceClassifier(
