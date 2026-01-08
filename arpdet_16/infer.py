@@ -3,10 +3,7 @@ from __future__ import annotations
 
 import os
 
-os.environ.setdefault("OMP_NUM_THREADS", "2")
-os.environ.setdefault("OPENBLAS_NUM_THREADS", "2")
-os.environ.setdefault("MKL_NUM_THREADS", "2")
-os.environ.setdefault("NUMEXPR_NUM_THREADS", "2")
+
 os.environ.setdefault("TORCH_CPP_LOG_LEVEL", "ERROR")
 
 import argparse
@@ -240,7 +237,10 @@ def run_on_pcap(
     window_obs: List[WindowObs] = []
     tracker = ArpClaimTracker()
     max_prob_seen = 0.0
-    cast_ctx = (lambda: torch.autocast(device_type=device.type, dtype=torch.float16)) if use_amp else nullcontext
+    # The original line was: cast_ctx = (lambda: torch.autocast(device_type=device.type, dtype=torch.float16)) if use_amp else nullcontext
+    # The instruction implies removing this line and using the context manager directly where needed.
+    # The context manager is used directly in the loop:
+    # with (torch.autocast(device_type=device.type, dtype=torch.float16) if use_amp else nullcontext()):
 
     with open(csv_path, "w", newline="") as fcsv:
         writer = csv.DictWriter(fcsv, fieldnames=fieldnames)

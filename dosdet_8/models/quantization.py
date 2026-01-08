@@ -8,6 +8,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.ao.quantization.quantization_mappings import get_default_dynamic_quant_module_mappings
+from torch.ao.quantization import get_default_qconfig
 
 
 class Int8Quantizer:
@@ -206,3 +207,76 @@ def normalize_checkpoint_path(path: Path | None) -> Path | None:
     if path is None:
         return None
     return Path(path).expanduser().resolve()
+
+
+class LogitsOnlyWrapper(nn.Module):
+    """Wrapper that exposes logits-only forward for FX quantization."""
+
+    def __init__(self, model: nn.Module) -> None:
+        super().__init__()
+        self.model = model
+
+    def forward(self, seq: torch.Tensor, static: torch.Tensor) -> torch.Tensor:  # type: ignore[override]
+        out = self.model(seq, static)
+        if isinstance(out, dict):
+            return out["logits"]
+        return out
+
+
+def _build_qconfig_mapping(backend: str | None):
+    qconfig = get_default_qconfig(backend or torch.backends.quantized.engine)
+    try:
+        from torch.ao.quantization.qconfig_mapping import QConfigMapping
+    except Exception:  # pragma: no cover - fallback for older PyTorch
+        return {"": qconfig}
+    return QConfigMapping().set_global(qconfig)
+
+
+def _prepare_fx(model: nn.Module, example_inputs):
+    try:
+        from torch.ao.quantization.quantize_fx import prepare_fx
+    except Exception:  # pragma: no cover - fallback for older PyTorch
+        from torch.quantization.quantize_fx import prepare_fx
+    return prepare_fx(model, _build_qconfig_mapping(torch.backends.quantized.engine), example_inputs)
+
+
+def _convert_fx(prepared: nn.Module):
+    try:
+        from torch.ao.quantization.quantize_fx import convert_fx
+    except Exception:  # pragma: no cover - fallback for older PyTorch
+        from torch.quantization.quantize_fx import convert_fx
+    return convert_fx(prepared)
+
+
+def apply_static_quantization_fx(
+    model: nn.Module,
+    example_inputs,
+    calib_batches,
+    backend: str | None,
+) -> nn.Module:
+    """Apply post-training static quantization via FX graph mode."""
+
+    set_quantized_engine(backend)
+    model.eval()
+    wrapper = LogitsOnlyWrapper(model)
+    prepared = _prepare_fx(wrapper, example_inputs)
+    with torch.no_grad():
+        for seq, static in calib_batches:
+            prepared(seq, static)
+    quantized = _convert_fx(prepared)
+    return quantized.eval()
+
+
+def build_static_fx_model(
+    model: nn.Module,
+    example_inputs,
+    backend: str | None,
+) -> nn.Module:
+    """Build a static-quantized FX model without calibration (for loading state_dict)."""
+
+    set_quantized_engine(backend)
+    model.eval()
+    wrapper = LogitsOnlyWrapper(model)
+    prepared = _prepare_fx(wrapper, example_inputs)
+    quantized = _convert_fx(prepared)
+    return quantized.eval()

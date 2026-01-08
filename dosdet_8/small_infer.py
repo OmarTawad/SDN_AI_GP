@@ -81,12 +81,17 @@ def infer_first_window(
 
     with torch.inference_mode():
         out = model(seq_t, static_t)
-        logit_T = out["logits"].squeeze() / max(float(T), 1e-3)
+        if isinstance(out, dict):
+            logits = out["logits"].squeeze()
+            attn = out.get("attn")
+        else:
+            logits = out.squeeze()
+            attn = None
+        logit_T = logits / max(float(T), 1e-3)
         prob_t = torch.sigmoid(logit_T)
         logit = float(logit_T.float().item())
         prob = float(prob_t.item())
         attn_peak_bin = None
-        attn = out.get("attn")
         if attn is not None:
             attn_arr = attn.cpu().numpy().ravel()
             attn_peak_bin = int(np.argmax(attn_arr))
@@ -145,9 +150,9 @@ def main() -> None:
         raise FileNotFoundError(f"PCAP not found: {pcap_path}")
 
     cfg_quant = cfg.get("quantization", {}) or {}
-    quantized = bool(cfg_quant.get("enabled", False))
-    if args.quantized is not None:
-        quantized = bool(args.quantized)
+    quantized = True if args.quantized is None else bool(args.quantized)
+    if not quantized:
+        raise RuntimeError("CPU-only int8 inference is enforced; remove --no-quantized.")
     save_dir = cfg["paths"]["artifacts_dir"]
     model, scaler, slimmer, meta, calib = _load_artifacts(
         save_dir,
@@ -156,9 +161,7 @@ def main() -> None:
         quantized_checkpoint=args.quantized_checkpoint,
         quant_backend=args.quant_backend,
     )
-    device = torch.device("cpu" if quantized else ("cuda" if torch.cuda.is_available() else "cpu"))
-    if not quantized:
-        model.to(device=device, dtype=torch.float32)
+    device = torch.device("cpu")
 
     T = float(calib.get("temperature", 1.0))
     tau = float(args.tau if args.tau is not None else calib.get("threshold", 0.5))

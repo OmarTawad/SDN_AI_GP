@@ -42,10 +42,10 @@ class InferencePipeline:
         configure_logging()
         seed_everything(config.seed, deterministic=False)
         self.logger = get_logger(__name__)
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device("cpu")
         precision = (config.training.supervised.precision_mode or "").lower()
-        self.amp_dtype = torch.float16 if precision in {"autocast", "fp16", "float16", "amp_fp16", "16"} else None
-        self.use_amp = self.device.type == "cuda" and self.amp_dtype is not None
+        self.amp_dtype = torch.float16 # Keep float16 dtype for model loading if needed, but run on CPU
+        self.use_amp = False # Force disable AMP on CPU
         self.manifest = load_json(config.paths.manifest_path)
         self.feature_columns: Sequence[str] = self.manifest.get("feature_columns", [])
         if not self.feature_columns:
@@ -107,7 +107,7 @@ class InferencePipeline:
         features_supervised[self.feature_columns] = self.scaler.transform(frame[self.feature_columns])
 
         sup_dataset = SequenceDataset([features_supervised], self.feature_columns, self.family_mapping, self.config.windowing)
-        sup_loader = DataLoader(sup_dataset, batch_size=1, shuffle=False, collate_fn=collate_fn, num_workers=2, pin_memory=True, prefetch_factor=4, persistent_workers=True)
+        sup_loader = DataLoader(sup_dataset, batch_size=1, shuffle=False, collate_fn=collate_fn, num_workers=0, pin_memory=False, prefetch_factor=None, persistent_workers=False)
 
         window_store = self._run_supervised(frame, sup_loader)
         window_results = self._assemble_results(frame, window_store)
