@@ -31,8 +31,8 @@ class InferencePipeline:
         self.config = config
         configure_logging()
         seed_everything(config.seed, deterministic=False)
-        self.device = self._select_device(config.device if hasattr(config, "device") else "auto")
         self.logger = get_logger(__name__)
+        self.device = self._select_device(config.device if hasattr(config, "device") else "auto")
 
         self.manifest = load_json(config.paths.manifest_path)
         self.feature_columns: Sequence[str] = self.manifest.get("feature_columns", [])
