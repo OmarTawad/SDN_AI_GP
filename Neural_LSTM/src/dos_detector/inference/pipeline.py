@@ -58,8 +58,12 @@ class InferencePipeline:
             return torch.device("cpu")
             
         try:
-            # Test CUDA capability
-            torch.zeros(1).to("cuda")
+            # Test CUDA capability with actual computation and sync
+            # This is necessary because some errors (like no kernel image) are asynchronous
+            # or may not trigger on simple memory allocation.
+            t = torch.tensor([1.0, 2.0]).to("cuda")
+            _ = t * t
+            torch.cuda.synchronize()
             return torch.device("cuda")
         except RuntimeError as e:
             self.logger.warning(f"CUDA available but failed sanity check (likely version mismatch): {e}. Falling back to CPU.", extra={"markup": True})
