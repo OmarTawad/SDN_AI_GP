@@ -55,6 +55,11 @@ def _read_parquet(path: str, columns: List[str]) -> pd.DataFrame:
 
     The parquet engine can be overridden via ARPDET_PARQUET_ENGINE in {"fastparquet","pyarrow","auto"}.
     """
+    if path.endswith(".csv"):
+         # Efficiently read CSV by loading only necessary columns if specified
+         df = pd.read_csv(path, usecols=columns if columns else None)
+         return df
+
     engine_pref = os.environ.get("ARPDET_PARQUET_ENGINE", "fastparquet").lower()
     if engine_pref == "auto":
         engine_order = ["fastparquet", "pyarrow"]
@@ -131,8 +136,16 @@ class CachedDataset(Dataset):
         row = self.df.iloc[idx]
         M = int(row["M"])
         K_seq = int(row["K_seq"])
-        seq = np.array(row["seq"], dtype=np.float32).reshape(M, K_seq)
-        static = np.array(row["static"], dtype=np.float32)
+        def _to_float_array(val):
+            if isinstance(val, (str, bytes)):
+                try:
+                    return np.array(json.loads(val), dtype=np.float32)
+                except Exception:
+                    pass
+            return np.array(val, dtype=np.float32)
+
+        seq = _to_float_array(row["seq"]).reshape(M, K_seq)
+        static = _to_float_array(row["static"])
         y = np.array([float(row["y"])], dtype=np.float32)
         fam = np.array([int(row["fam"])], dtype=np.int64)
         t0 = np.array([float(row["t0"])], dtype=np.float64)

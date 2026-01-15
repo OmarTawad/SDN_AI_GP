@@ -57,24 +57,31 @@ def preprocess(cfg: dict, pcaps_glob: str | List[str], labels_csv: str):
     files = sorted(list(set(files)))
     assert files, f"No pcaps matched: {pcaps_glob}"
 
+    # Writer selection (default to fastparquet to avoid CPU instruction issues)
+    engine_pref = os.environ.get("ARPDET_PARQUET_ENGINE", "csv").lower()
+    use_csv = engine_pref == "csv"
+    use_pyarrow = engine_pref == "pyarrow"
+
     # Arrow schema (list columns for seq/static)
     # Lazy load pyarrow to avoid illegal instruction on import
-    try:
-        import pyarrow as pa
-        schema = pa.schema([
-            ("file", pa.string()),
-            ("t0", pa.float64()),
-            ("t1", pa.float64()),
-            ("y", pa.int32()),
-            ("fam", pa.int32()),
-            ("M", pa.int32()),
-            ("K_seq", pa.int32()),
-            ("K_static", pa.int32()),
-            ("seq", pa.list_(pa.float32())),
-            ("static", pa.list_(pa.float32())),
-        ])
-    except ImportError:
-        schema = None
+    schema = None
+    if not use_csv:
+        try:
+            import pyarrow as pa
+            schema = pa.schema([
+                ("file", pa.string()),
+                ("t0", pa.float64()),
+                ("t1", pa.float64()),
+                ("y", pa.int32()),
+                ("fam", pa.int32()),
+                ("M", pa.int32()),
+                ("K_seq", pa.int32()),
+                ("K_static", pa.int32()),
+                ("seq", pa.list_(pa.float32())),
+                ("static", pa.list_(pa.float32())),
+            ])
+        except ImportError:
+            schema = None
 
     # Streaming state
     shard_id = 0
@@ -88,9 +95,13 @@ def preprocess(cfg: dict, pcaps_glob: str | List[str], labels_csv: str):
 
     def _open_new_shard():
         nonlocal shard_id, shard_writer, shard_path, bytes_written_in_shard
-        shard_path = os.path.join(cache_dir, f"shard_{shard_id:05d}.parquet")
-        import pyarrow.parquet as pq
-        shard_writer = pq.ParquetWriter(shard_path, schema, compression="zstd")
+        ext = "csv" if use_csv else "parquet"
+        shard_path = os.path.join(cache_dir, f"shard_{shard_id:05d}.{ext}")
+        shard_writer = None
+        if not use_csv:
+            if use_pyarrow:
+                 import pyarrow.parquet as pq
+                 shard_writer = pq.ParquetWriter(shard_path, schema, compression="zstd")
         bytes_written_in_shard = 0
         shard_id += 1
 
@@ -98,23 +109,55 @@ def preprocess(cfg: dict, pcaps_glob: str | List[str], labels_csv: str):
         nonlocal shard_writer, bytes_written_in_shard
         if not buf["file"]:
             return 0
-        table = pa.table({
-            "file": pa.array(buf["file"], type=pa.string()),
-            "t0": pa.array(buf["t0"], type=pa.float64()),
-            "t1": pa.array(buf["t1"], type=pa.float64()),
-            "y": pa.array(buf["y"], type=pa.int32()),
-            "fam": pa.array(buf["fam"], type=pa.int32()),
-            "M": pa.array(buf["M"], type=pa.int32()),
-            "K_seq": pa.array(buf["K_seq"], type=pa.int32()),
-            "K_static": pa.array(buf["K_static"], type=pa.int32()),
-            "seq": pa.array(buf["seq"], type=pa.list_(pa.float32())),
-            "static": pa.array(buf["static"], type=pa.list_(pa.float32())),
+
+        # Encode variable-length arrays as JSON strings for robust parquet/csv writing
+        seq_json = [json.dumps(list(np.asarray(arr, dtype=float).ravel())) for arr in buf["seq"]]
+        static_json = [json.dumps(list(np.asarray(arr, dtype=float).ravel())) for arr in buf["static"]]
+
+        df = pd.DataFrame({
+            "file": buf["file"],
+            "t0": buf["t0"],
+            "t1": buf["t1"],
+            "y": buf["y"],
+            "fam": buf["fam"],
+            "M": buf["M"],
+            "K_seq": buf["K_seq"],
+            "K_static": buf["K_static"],
+            "seq": seq_json,
+            "static": static_json,
         })
-        shard_writer.write_table(table)
-        # rough estimate using total bytes in this table
-        est = table.nbytes
-        # clear buffers
-        for k in buf: buf[k].clear()
+
+        if use_csv:
+            append_mode = os.path.exists(shard_path) and os.path.getsize(shard_path) > 0
+            df.to_csv(
+                shard_path,
+                index=False,
+                mode="a" if append_mode else "w",
+                header=not append_mode,
+            )
+            est = int(df.memory_usage(deep=True).sum())
+        elif use_pyarrow:
+            import pyarrow as pa
+            table = pa.Table.from_pandas(df, preserve_index=False)
+            if shard_writer is None:
+                 import pyarrow.parquet as pq
+                 shard_writer = pq.ParquetWriter(shard_path, table.schema, compression="zstd")
+            shard_writer.write_table(table)
+            est = table.nbytes
+        else:
+             # fastparquet fallback
+            append_mode = os.path.exists(shard_path) and os.path.getsize(shard_path) > 0
+            df.to_parquet(
+                shard_path,
+                engine="fastparquet",
+                compression="zstd",
+                index=False,
+                append=append_mode,
+            )
+            est = int(df.memory_usage(deep=True).sum())
+
+        for k in buf:
+            buf[k].clear()
         bytes_written_in_shard += est
         return est
 
