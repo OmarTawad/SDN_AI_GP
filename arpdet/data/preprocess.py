@@ -204,7 +204,8 @@ def preprocess(cfg: dict, pcaps_glob: str | List[str], labels_csv: str):
             # Rotate shard if size exceeds limit
             if bytes_written_in_shard >= shard_max_mb * 1024 * 1024:
                 # finalize current shard
-                shard_writer.close()
+                if shard_writer and hasattr(shard_writer, "close"):
+                    shard_writer.close()
                 manifest["files"].append({"path": shard_path})
                 # persist manifest incrementally (crash-safe)
                 with open(manifest_path, "w") as f:
@@ -218,7 +219,7 @@ def preprocess(cfg: dict, pcaps_glob: str | List[str], labels_csv: str):
     if buf["file"]:
         _flush_batch()
     # Close last shard
-    if shard_writer is not None:
+    if shard_writer and hasattr(shard_writer, "close"):
         shard_writer.close()
         manifest["files"].append({"path": shard_path})
 
