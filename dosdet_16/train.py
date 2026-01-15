@@ -52,6 +52,13 @@ def _read_parquet(path: str, columns: List[str] | None = None) -> pd.DataFrame:
     Helper that favours engines compatible with low-feature CPUs.
     Defaults to fastparquet when available and falls back to pyarrow.
     """
+    if path.endswith(".csv"):
+         try:
+             # Just read with pandas, JSON parsing happens in Dataset if needed
+             return pd.read_csv(path, usecols=columns if columns else None)
+         except Exception as e:
+             raise RuntimeError(f"Failed to read CSV shard {path}: {e}")
+
     override = os.environ.get("DOSDET_PARQUET_ENGINE", "").strip().lower()
     candidates = [override] if override else []
     candidates.extend(["fastparquet", "pyarrow"])
@@ -151,8 +158,19 @@ class CachedDataset(Dataset):
         M = int(row["M"])
         K_seq = int(row["K_seq"])
         seq_raw = row["seq"]
+
+        def _to_float_array(val):
+            if isinstance(val, (str, bytes)):
+                try:
+                    return np.array(json.loads(val), dtype=np.float32)
+                except Exception:
+                    pass
+            return np.array(val, dtype=np.float32)
+
         if isinstance(seq_raw, (bytes, bytearray, memoryview)):
             seq_flat = np.frombuffer(seq_raw, dtype=np.float32)
+        elif isinstance(seq_raw, str):
+            seq_flat = _to_float_array(seq_raw).reshape(-1)
         else:
             seq_flat = np.array(seq_raw, dtype=np.float32).reshape(-1)
         seq = seq_flat.reshape(M, K_seq)
@@ -162,6 +180,8 @@ class CachedDataset(Dataset):
         static_raw = row["static"]
         if isinstance(static_raw, (bytes, bytearray, memoryview)):
             static = np.frombuffer(static_raw, dtype=np.float32)
+        elif isinstance(static_raw, str):
+            static = _to_float_array(static_raw)
         else:
             static = np.array(static_raw, dtype=np.float32)
         y = np.array([float(row["y"])], dtype=np.float32)

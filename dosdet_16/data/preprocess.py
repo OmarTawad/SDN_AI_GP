@@ -68,7 +68,9 @@ def preprocess(cfg: dict, pcaps_glob, labels_csv: str):
     # Streaming state
     shard_id = 0
     shard_path = None
+    shard_writer = None
     bytes_in_buffer = 0
+    bytes_written_in_shard = 0
 
     # Batch buffers (to keep memory bounded)
     BATCH_ROWS = 5000
@@ -77,20 +79,87 @@ def preprocess(cfg: dict, pcaps_glob, labels_csv: str):
     def _estimate_row_bytes(seq_list, static_list) -> int:
         return (len(seq_list) + len(static_list)) * 4 + 256  # float32 bytes rough estimate
 
+    # Writer selection (default to fastparquet to avoid CPU instruction issues)
+    engine_pref = os.environ.get("DOSDET_PARQUET_ENGINE", "csv").lower()
+    use_csv = engine_pref == "csv"
+    use_pyarrow = engine_pref == "pyarrow"
+
+    # Arrow schema (list columns for seq/static)
+    # Lazy load pyarrow to avoid illegal instruction on import
+    schema = None
+    if not use_csv:
+        try:
+            import pyarrow as pa
+            schema = pa.schema([
+                ("file", pa.string()),
+                ("t0", pa.float64()),
+                ("t1", pa.float64()),
+                ("y", pa.int32()),
+                ("fam", pa.int32()),
+                ("M", pa.int32()),
+                ("K_seq", pa.int32()),
+                ("K_static", pa.int32()),
+                ("seq", pa.list_(pa.float32())),
+                ("static", pa.list_(pa.float32())),
+            ])
+        except ImportError:
+            schema = None
+
+    def _open_new_shard():
+        nonlocal shard_id, shard_writer, shard_path, bytes_written_in_shard
+        ext = "csv" if use_csv else "parquet"
+        shard_path = os.path.join(cache_dir, f"shard_{shard_id:05d}.{ext}")
+        shard_writer = None
+        if not use_csv:
+             if use_pyarrow:
+                 import pyarrow.parquet as pq
+                 shard_writer = pq.ParquetWriter(shard_path, schema, compression="zstd")
+        bytes_written_in_shard = 0
+        shard_id += 1
+
     def _flush_shard():
-        nonlocal shard_id, shard_path, bytes_in_buffer
+        nonlocal shard_id, shard_path, shard_writer, bytes_in_buffer, bytes_written_in_shard
         if not buf["file"]:
             return
-        shard_path = os.path.join(cache_dir, f"shard_{shard_id:05d}.parquet")
-        shard_id += 1
+
         df = pd.DataFrame(buf)
-        df.to_parquet(
-            shard_path,
-            engine="fastparquet",
-            compression="zstd",
-            index=False,
-        )
-        manifest["files"].append({"path": shard_path})
+
+        # If we're using pyarrow and the current shard is full, close it and open a new one
+        if shard_writer and bytes_written_in_shard >= shard_max_mb * 1024 * 1024:
+            shard_writer.close()
+            manifest["files"].append({"path": shard_path})
+            _open_new_shard()
+
+        if use_csv:
+            # Append to CSV, create header if file doesn't exist
+            header = not os.path.exists(shard_path) or bytes_written_in_shard == 0
+            df.to_csv(shard_path, mode="a", header=header, index=False)
+            bytes_written_in_shard += os.path.getsize(shard_path) - (os.path.getsize(shard_path) if header else 0) # rough estimate
+        elif use_pyarrow:
+            if shard_writer is None: # First time, or after a full shard was closed
+                _open_new_shard()
+            table = pa.Table.from_pandas(df, schema=schema, preserve_index=False)
+            shard_writer.write_table(table)
+            bytes_written_in_shard += table.nbytes
+        else: # fastparquet
+            # fastparquet doesn't support appending, so we write a new file each time
+            # and rely on the shard_max_mb to trigger a new file.
+            # If the current shard_path is already written to, we need a new one.
+            if shard_path is None or bytes_written_in_shard >= shard_max_mb * 1024 * 1024:
+                _open_new_shard()
+            df.to_parquet(
+                shard_path,
+                engine="fastparquet",
+                compression="zstd",
+                index=False,
+            )
+            bytes_written_in_shard = os.path.getsize(shard_path) # Actual size of the file
+        
+        # If not using pyarrow, and we just wrote a full shard, add to manifest and reset
+        if not use_pyarrow and bytes_written_in_shard >= shard_max_mb * 1024 * 1024:
+            manifest["files"].append({"path": shard_path})
+            shard_path = None # Force new shard on next flush
+
         with open(manifest_path, "w") as f:
             json.dump(manifest, f, indent=2)
         for k in buf:
