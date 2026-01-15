@@ -42,7 +42,7 @@ def _label_for(meta_map: Dict[str, tuple], base: str, t0: float):
     if np.isnan(start) or t0 >= start: return 1, 0
     return 0, -1
 
-def preprocess(cfg: dict, pcaps_glob: str, labels_csv: str):
+def preprocess(cfg: dict, pcaps_glob: str | List[str], labels_csv: str):
     cache_dir = cfg["paths"]["cache_dir"]
     ensure_dir(cache_dir)
     shard_max_mb = int(cfg["preprocess"]["shard_max_mb"])
@@ -51,7 +51,11 @@ def preprocess(cfg: dict, pcaps_glob: str, labels_csv: str):
     M = int(cfg["windowing"]["micro_bins"])
     label_map = _labels_map(labels_csv)
 
-    files = sorted(glob.glob(pcaps_glob))
+    patterns = pcaps_glob if isinstance(pcaps_glob, list) else [pcaps_glob]
+    files = []
+    for pat in patterns:
+        files.extend(sorted(glob.glob(pat)))
+    files = sorted(list(set(files)))
     assert files, f"No pcaps matched: {pcaps_glob}"
 
     # Arrow schema (list columns for seq/static)
@@ -177,7 +181,7 @@ def preprocess(cfg: dict, pcaps_glob: str, labels_csv: str):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", required=True, help="Path to config.yaml")
-    ap.add_argument("--pcaps", default=None, help="Optional glob override; defaults to config preprocess.pcaps_glob")
+    ap.add_argument("--pcaps", nargs="+", default=None, help="Optional glob override; defaults to config preprocess.pcaps_glob")
     ap.add_argument("--labels", default=None, help="Optional labels.csv override; defaults to config preprocess.labels_csv")
     args = ap.parse_args()
     cfg = yaml.safe_load(open(args.config))
