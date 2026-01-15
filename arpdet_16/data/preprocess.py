@@ -13,8 +13,7 @@ import pandas as pd
 import yaml
 from tqdm import tqdm
 
-import pyarrow as pa
-import pyarrow.parquet as pq
+
 
 from data.pcap_reader import iter_rows_from_pcap
 from data.windowizer import iter_windows
@@ -59,22 +58,27 @@ def preprocess(cfg: dict, pcaps_glob: str | List[str], labels_csv: str):
     assert files, f"No pcaps matched: {pcaps_glob}"
 
     # Arrow schema (list columns for seq/static)
-    schema = pa.schema([
-        ("file", pa.string()),
-        ("t0", pa.float64()),
-        ("t1", pa.float64()),
-        ("y", pa.int32()),
-        ("fam", pa.int32()),
-        ("M", pa.int32()),
-        ("K_seq", pa.int32()),
-        ("K_static", pa.int32()),
-        ("seq", pa.list_(pa.float32())),
-        ("static", pa.list_(pa.float32())),
-    ])
+    # Lazy load pyarrow to avoid illegal instruction on import
+    try:
+        import pyarrow as pa
+        schema = pa.schema([
+            ("file", pa.string()),
+            ("t0", pa.float64()),
+            ("t1", pa.float64()),
+            ("y", pa.int32()),
+            ("fam", pa.int32()),
+            ("M", pa.int32()),
+            ("K_seq", pa.int32()),
+            ("K_static", pa.int32()),
+            ("seq", pa.list_(pa.float32())),
+            ("static", pa.list_(pa.float32())),
+        ])
+    except ImportError:
+        schema = None
 
     # Streaming state
     shard_id = 0
-    shard_writer: pq.ParquetWriter | None = None
+    shard_writer = None
     shard_path = None
     bytes_written_in_shard = 0
 
@@ -85,6 +89,7 @@ def preprocess(cfg: dict, pcaps_glob: str | List[str], labels_csv: str):
     def _open_new_shard():
         nonlocal shard_id, shard_writer, shard_path, bytes_written_in_shard
         shard_path = os.path.join(cache_dir, f"shard_{shard_id:05d}.parquet")
+        import pyarrow.parquet as pq
         shard_writer = pq.ParquetWriter(shard_path, schema, compression="zstd")
         bytes_written_in_shard = 0
         shard_id += 1
