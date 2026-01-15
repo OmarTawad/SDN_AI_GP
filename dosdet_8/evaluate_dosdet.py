@@ -19,7 +19,12 @@ from torch.utils.data import DataLoader
 from features.feature_slimming import StaticSlimmer
 from features.scaler import RobustScaler
 from models.dws_cnn import FastDetector
-from models.quantization import apply_dynamic_quantization, set_quantized_engine, unpack_checkpoint
+from models.quantization import (
+    apply_dynamic_quantization,
+    build_static_fx_model,
+    set_quantized_engine,
+    unpack_checkpoint,
+)
 from train import CachedDataset, collate, load_manifest, _read_parquet
 
 ROOT = Path(__file__).resolve().parent
@@ -109,7 +114,9 @@ def _load_artifacts(
     checkpoint_path = art_dir / "model_best.pt"
     if quantized:
         cfg_quant = cfg.get("quantization", {}) or {}
-        set_quantized_engine(quant_backend or cfg_quant.get("backend"))
+        mode = str(cfg_quant.get("mode", "dynamic")).lower()
+        backend = quant_backend or cfg_quant.get("backend")
+        set_quantized_engine(backend)
         candidate = quantized_checkpoint or cfg_quant.get("checkpoint_path")
         if candidate:
             candidate_path = _resolve_path(candidate)
@@ -119,13 +126,23 @@ def _load_artifacts(
                 print(f"[warn] quantized checkpoint not found at {candidate_path}; using float checkpoint.")
         state = torch.load(checkpoint_path, map_location="cpu")
         state_dict, is_quantized = unpack_checkpoint(state)
-        if is_quantized:
-            quantized_model = apply_dynamic_quantization(model)
+        if mode == "static":
+            if not is_quantized:
+                raise RuntimeError("Static quantization requested but checkpoint is not quantized.")
+            micro_bins = int(meta.get("micro_bins", cfg["windowing"]["micro_bins"]))
+            example_seq = torch.zeros((1, micro_bins, int(meta["seq_in_dim"])), dtype=torch.float32)
+            example_static = torch.zeros((1, int(meta["static_dim"])), dtype=torch.float32)
+            quantized_model = build_static_fx_model(model, (example_seq, example_static), backend)
             quantized_model.load_state_dict(state_dict)
+            model = quantized_model
         else:
-            model.load_state_dict(state_dict)
-            quantized_model = apply_dynamic_quantization(model)
-        model = quantized_model
+            if is_quantized:
+                quantized_model = apply_dynamic_quantization(model)
+                quantized_model.load_state_dict(state_dict)
+            else:
+                model.load_state_dict(state_dict)
+                quantized_model = apply_dynamic_quantization(model)
+            model = quantized_model
     else:
         state = torch.load(checkpoint_path, map_location="cpu")
         state_dict, _ = unpack_checkpoint(state)
@@ -168,7 +185,11 @@ def _evaluate(
             stat_scaled = scaler.transform(stat_np)
             stat_slim = slimmer.transform(stat_scaled).astype(np.float32)
             static_t = torch.from_numpy(stat_slim).to(device, non_blocking=True, dtype=torch.float32)
-            logits = model(seq, static_t)["logits"].squeeze(-1)
+            out = model(seq, static_t)
+            if isinstance(out, dict):
+                logits = out["logits"].squeeze(-1)
+            else:
+                logits = out.squeeze(-1)
             logits = logits / temperature
             batch_prob = torch.sigmoid(logits).cpu().numpy()
             probs.append(batch_prob)
@@ -227,9 +248,9 @@ def main():
 
     loader = _build_loader(cfg, batch_size=args.batch_size)
     cfg_quant = cfg.get("quantization", {}) or {}
-    quantized = bool(cfg_quant.get("enabled", False))
-    if args.quantized is not None:
-        quantized = bool(args.quantized)
+    quantized = True if args.quantized is None else bool(args.quantized)
+    if not quantized:
+        raise RuntimeError("CPU-only int8 evaluation is enforced; remove --no-quantized.")
     model, scaler, slimmer, calib = _load_artifacts(
         artifacts_dir,
         cfg,
@@ -237,7 +258,7 @@ def main():
         quantized_checkpoint=args.quantized_checkpoint,
         quant_backend=args.quant_backend,
     )
-    device = torch.device("cpu" if quantized else ("cuda" if torch.cuda.is_available() else "cpu"))
+    device = torch.device("cpu")
     metrics, cm, report = _evaluate(model, loader, scaler, slimmer, calib, device, quantized)
 
     with open(eval_dir / "metrics.json", "w", encoding="utf-8") as f:

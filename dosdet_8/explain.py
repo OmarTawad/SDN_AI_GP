@@ -22,7 +22,12 @@ from data.dataset import WindowDataset, LabelProvider
 from features.scaler import RobustScaler
 from features.feature_slimming import StaticSlimmer
 from models.dws_cnn import FastDetector
-from models.quantization import apply_dynamic_quantization, set_quantized_engine, unpack_checkpoint
+from models.quantization import (
+    apply_dynamic_quantization,
+    build_static_fx_model,
+    set_quantized_engine,
+    unpack_checkpoint,
+)
 
 torch.set_num_threads(min(2, max(1, os.cpu_count() or 1)))
 try:
@@ -59,7 +64,9 @@ def _load_artifacts(
     checkpoint_path = os.path.join(artifacts_dir, "model_best.pt")
     if quantized:
         cfg_quant = cfg.get("quantization", {}) or {}
-        set_quantized_engine(quant_backend or cfg_quant.get("backend"))
+        mode = str(cfg_quant.get("mode", "dynamic")).lower()
+        backend = quant_backend or cfg_quant.get("backend")
+        set_quantized_engine(backend)
         candidate = quantized_checkpoint or cfg_quant.get("checkpoint_path")
         if candidate:
             candidate = os.path.expanduser(candidate)
@@ -69,13 +76,23 @@ def _load_artifacts(
                 print(f"[warn] quantized checkpoint not found at {candidate}; using float checkpoint.")
         state = torch.load(checkpoint_path, map_location="cpu")
         state_dict, is_quantized = unpack_checkpoint(state)
-        if is_quantized:
-            quantized_model = apply_dynamic_quantization(model)
+        if mode == "static":
+            if not is_quantized:
+                raise RuntimeError("Static quantization requested but checkpoint is not quantized.")
+            micro_bins = int(meta.get("micro_bins", cfg["windowing"]["micro_bins"]))
+            example_seq = torch.zeros((1, micro_bins, int(meta["seq_in_dim"])), dtype=torch.float32)
+            example_static = torch.zeros((1, int(meta["static_dim"])), dtype=torch.float32)
+            quantized_model = build_static_fx_model(model, (example_seq, example_static), backend)
             quantized_model.load_state_dict(state_dict)
+            model = quantized_model
         else:
-            model.load_state_dict(state_dict)
-            quantized_model = apply_dynamic_quantization(model)
-        model = quantized_model
+            if is_quantized:
+                quantized_model = apply_dynamic_quantization(model)
+                quantized_model.load_state_dict(state_dict)
+            else:
+                model.load_state_dict(state_dict)
+                quantized_model = apply_dynamic_quantization(model)
+            model = quantized_model
     else:
         state = torch.load(checkpoint_path, map_location="cpu")
         state_dict, _ = unpack_checkpoint(state)
@@ -119,7 +136,11 @@ def permutation_importance(
     stat_tensor = torch.from_numpy(stat_slim).to(device=device, dtype=torch.float32)
 
     with torch.no_grad():
-        logits = model(seq_tensor, stat_tensor)["logits"].squeeze(1)
+        out = model(seq_tensor, stat_tensor)
+        if isinstance(out, dict):
+            logits = out["logits"].squeeze(1)
+        else:
+            logits = out.squeeze(1)
         base_probs = torch.sigmoid(logits).cpu().numpy()
 
     importances: List[Tuple[int, float]] = []
@@ -128,7 +149,11 @@ def permutation_importance(
         rng.shuffle(perturbed[:, j])
         pert_tensor = torch.from_numpy(perturbed).to(device=device, dtype=torch.float32)
         with torch.no_grad():
-            pert_logits = model(seq_tensor, pert_tensor)["logits"].squeeze(1)
+            pert_out = model(seq_tensor, pert_tensor)
+            if isinstance(pert_out, dict):
+                pert_logits = pert_out["logits"].squeeze(1)
+            else:
+                pert_logits = pert_out.squeeze(1)
             pert_probs = torch.sigmoid(pert_logits).cpu().numpy()
         delta = float(np.mean(np.abs(base_probs - pert_probs)))
         importances.append((j, delta))
@@ -156,8 +181,13 @@ def save_attention_heatmaps(
             seq_t = seq.unsqueeze(0).to(device=device, dtype=torch.float32)
             stat_t = torch.from_numpy(stat_slim).to(device=device, dtype=torch.float32)
             out = model(seq_t, stat_t)
-            prob = float(torch.sigmoid(out["logits"]).item())
-            attn = out.get("attn")
+            if isinstance(out, dict):
+                logits = out["logits"]
+                attn = out.get("attn")
+            else:
+                logits = out
+                attn = None
+            prob = float(torch.sigmoid(logits).item())
             if attn is not None:
                 attn_vec = attn.cpu().numpy().ravel()
             else:
@@ -206,10 +236,10 @@ def main() -> None:
         cfg = yaml.safe_load(f)
 
     cfg_quant = cfg.get("quantization", {}) or {}
-    quantized = bool(cfg_quant.get("enabled", False))
-    if args.quantized is not None:
-        quantized = bool(args.quantized)
-    device = torch.device("cpu" if quantized else ("cuda" if torch.cuda.is_available() else "cpu"))
+    quantized = True if args.quantized is None else bool(args.quantized)
+    if not quantized:
+        raise RuntimeError("CPU-only int8 explain is enforced; remove --no-quantized.")
+    device = torch.device("cpu")
 
     model, scaler, slimmer, meta = _load_artifacts(
         cfg,
@@ -217,8 +247,7 @@ def main() -> None:
         quantized_checkpoint=args.quantized_checkpoint,
         quant_backend=args.quant_backend,
     )
-    if not quantized:
-        model.to(device=device, dtype=torch.float32)
+    # Quantized models stay on CPU.
 
     pcap_glob = args.pcaps or cfg["preprocess"]["pcaps_glob"]
     files = sorted(glob.glob(pcap_glob)) if any(ch in pcap_glob for ch in "*?[]") else [pcap_glob]

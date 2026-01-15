@@ -109,12 +109,12 @@ Adjust the config once and rely on the Makefile; scripts read everything from th
 # 1) Train the float CNN (optional CUDA fake-quant is controlled by training.int8_quantized in config.yaml)
 python3 train.py --config config.yaml
 
-# 2) Create a dynamic int8 checkpoint
+# 2) Create a dynamic int8 checkpoint (Linear layers only)
 python3 scripts/quantize_supervised.py \
   --config config.yaml \
   --output artifacts/model_best_int8_dynamic.pt
 
-# 3) Run quantized inference (explicit checkpoint override)
+# 3) Run quantized inference (dynamic)
 python3 infer.py --config config.yaml \
   --pcaps "samples/*.pcap" \
   --out reports/int8 \
@@ -126,6 +126,32 @@ python3 scripts/verify_quantization.py \
   --config config.yaml \
   --int8-checkpoint artifacts/model_best_int8_dynamic.pt \
   --backend qnnpack
+```
+
+### Post-training Static Quantization (PTQ)
+
+Static int8 quantizes Conv1d + Linear layers but requires calibration data.
+
+```bash
+# 1) Ensure cached shards exist (calibration uses cache/manifest.json)
+python3 -m data.preprocess --config config.yaml
+
+# 2) Create a static int8 checkpoint (PTQ)
+python3 scripts/quantize_static.py \
+  --config config.yaml \
+  --output artifacts/model_best_int8_static.pt \
+  --backend qnnpack \
+  --calib-batches 32
+
+# 3) Update config.yaml quantization.mode: static
+#    quantization.checkpoint_path: artifacts/model_best_int8_static.pt
+
+# 4) Run quantized inference (static)
+python3 infer.py --config config.yaml \
+  --pcaps "samples/*.pcap" \
+  --out reports/int8_static \
+  --quantized \
+  --quantized-checkpoint artifacts/model_best_int8_static.pt
 ```
 
 ## Cleaning up
