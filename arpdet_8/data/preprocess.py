@@ -147,7 +147,12 @@ def preprocess(cfg: dict, pcaps_glob: str | List[str], labels_csv: str):
     for p in tqdm(files, desc="PCAP files", unit="file"):
         base = os.path.basename(p)
         windows = iter_windows(iter_rows_from_pcap(p), W, S, M)
+        limit = int(cfg.get("preprocess", {}).get("limit", 0))
+        total_windows = 0
+        
         for (t0, t1, win_rows, bins) in tqdm(windows, desc=f"Windows: {base}", unit="win", leave=False):
+            if limit > 0 and total_windows >= limit:
+                 break
             if not win_rows:
                 continue
             seq_np, extras = compute_sequence_features(win_rows, bins, M)
@@ -210,6 +215,10 @@ def main():
     ap.add_argument("--labels", default=None, help="Optional labels.csv override; defaults to config preprocess.labels_csv")
     args = ap.parse_args()
     cfg = yaml.safe_load(open(args.config))
+
+    if args.limit > 0: 
+        cfg["preprocess"]["limit"] = args.limit
+    
     pcaps = args.pcaps or cfg["preprocess"]["pcaps_glob"]
     labels = args.labels or cfg["preprocess"]["labels_csv"]
     preprocess(cfg, pcaps, labels)

@@ -13,9 +13,9 @@ import pandas as pd
 import yaml
 from tqdm import tqdm
 
-import pyarrow.parquet as pq
-except ImportError:
-    pq = None
+# import pyarrow.parquet as pq
+# except ImportError:
+#     pq = None
 
 from data.pcap_reader import iter_rows_from_pcap
 from data.windowizer import iter_windows
@@ -174,7 +174,12 @@ def preprocess(cfg: dict, pcaps_glob: str, labels_csv: str):
     for p in tqdm(files, desc="PCAP files", unit="file"):
         base = os.path.basename(p)
         windows = iter_windows(iter_rows_from_pcap(p, ssdp_v4, ssdp_v6), W, S, M)
+        limit = int(cfg.get("preprocess", {}).get("limit", 0))
+        total_windows = 0
+        
         for (t0, t1, win_rows, bins) in tqdm(windows, desc=f"Windows: {base}", unit="win", leave=False):
+            if limit > 0 and total_windows >= limit:
+                 break
             if not win_rows:
                 continue
             seq_np, extras = compute_sequence_features(win_rows, bins, M, top_ports)
@@ -198,6 +203,8 @@ def preprocess(cfg: dict, pcaps_glob: str, labels_csv: str):
             buf["K_static"].append(int(static_vec.size))
             buf["seq"].append(seq_np.astype(np.float32).reshape(-1))
             buf["static"].append(static_vec.astype(np.float32))
+
+            total_windows += 1
 
             # Flush by batch size
             if len(buf["file"]) >= BATCH_ROWS:
@@ -234,8 +241,13 @@ def main():
     ap.add_argument("--config", required=True, help="Path to config.yaml")
     ap.add_argument("--pcaps", default=None, help="Optional glob override; defaults to config preprocess.pcaps_glob")
     ap.add_argument("--labels", default=None, help="Optional labels.csv override; defaults to config preprocess.labels_csv")
+    ap.add_argument("--limit", type=int, default=0, help="Limit number of windows to process per file")
     args = ap.parse_args()
     cfg = yaml.safe_load(open(args.config))
+
+    if args.limit > 0: 
+        cfg["preprocess"]["limit"] = args.limit
+    
     pcaps = args.pcaps or cfg["preprocess"]["pcaps_glob"]
     labels = args.labels or cfg["preprocess"]["labels_csv"]
     preprocess(cfg, pcaps, labels)

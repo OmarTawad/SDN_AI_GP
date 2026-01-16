@@ -105,7 +105,12 @@ def preprocess(cfg: dict, pcaps_glob, labels_csv: str):
     for p in tqdm(files, desc="PCAP files", unit="file"):
         base = os.path.basename(p)
         windows = iter_windows(iter_rows_from_pcap(p, ssdp_v4, ssdp_v6), W, S, M)
+        limit = int(cfg.get("preprocess", {}).get("limit", 0))
+        total_windows = 0
+        
         for (t0, t1, win_rows, bins) in tqdm(windows, desc=f"Windows: {base}", unit="win", leave=False):
+            if limit > 0 and total_windows >= limit:
+                 break
             if not win_rows:
                 continue
             seq_np, extras = compute_sequence_features(win_rows, bins, M, top_ports)
@@ -132,6 +137,7 @@ def preprocess(cfg: dict, pcaps_glob, labels_csv: str):
             static_list = static_vec.astype(np.float32).tolist()
             buf["seq"].append(seq_list)
             buf["static"].append(static_list)
+            total_windows += 1
             bytes_in_buffer += _estimate_row_bytes(seq_list, static_list)
 
             # Flush by batch size or size threshold
@@ -158,8 +164,13 @@ def main():
         help="Optional glob override(s); pass one or more patterns. Defaults to config preprocess.pcaps_glob",
     )
     ap.add_argument("--labels", default=None, help="Optional labels.csv override; defaults to config preprocess.labels_csv")
+    ap.add_argument("--limit", type=int, default=0, help="Limit number of windows to process per file")
     args = ap.parse_args()
     cfg = yaml.safe_load(open(args.config))
+
+    if args.limit > 0: 
+        cfg["preprocess"]["limit"] = args.limit
+    
     pcaps = args.pcaps or cfg["preprocess"]["pcaps_glob"]
     labels = args.labels or cfg["preprocess"]["labels_csv"]
     preprocess(cfg, pcaps, labels)

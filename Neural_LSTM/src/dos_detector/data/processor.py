@@ -22,7 +22,7 @@ class FeaturePipeline:
         self._last_windows: List[Window] = []
         self._last_host_maps: Dict[str, Dict[int, Dict[str, int]]] = {"macs": {}, "ips": {}}
 
-    def process_single(self, pcap_path: Path) -> Tuple[pd.DataFrame, object]:
+    def process_single(self, pcap_path: Path, limit: int = 0) -> Tuple[pd.DataFrame, object]:
         limit_env = os.getenv("DOS_LIMIT_PKTS")
         limit = int(limit_env) if (limit_env and limit_env.isdigit()) else None
 
@@ -35,8 +35,10 @@ class FeaturePipeline:
             hop_size=self.config.windowing.hop_size,
             max_windows=self.config.windowing.max_windows,
         ))
-        windows = builder.build(packets)
-        self._last_windows = list(windows)
+        windows = list(builder.build(packets))
+        if limit > 0:
+            windows = windows[:limit]
+        self._last_windows = windows
         self._last_host_maps = self._build_host_maps(self._last_windows)
         t2 = time.perf_counter()
 
@@ -101,7 +103,7 @@ class FeaturePipeline:
             "ips": {int(idx): {ip: int(count) for ip, count in counts.items()} for idx, counts in data.get("ips", {}).items()},
         }
 
-    def process_files(self, pcaps: Iterable[Path], out_dir: Path) -> Dict[str, object]:
+    def process_files(self, pcaps: Iterable[Path], out_dir: Path, limit: int = 0) -> Dict[str, object]:
         ensure_dir(out_dir)
         paths = [Path(p) for p in pcaps]
 
@@ -111,7 +113,7 @@ class FeaturePipeline:
         for idx, p in enumerate(progress(paths, desc="Extracting", unit="pcap"), 1):
             try:
                 print(f"--> ({idx}/{len(paths)}) {p.name}: start", flush=True)
-                df, meta = self.process_single(p)
+                df, meta = self.process_single(p, limit=limit)
 
                 if not feature_cols:
                     feature_cols = [c for c in df.columns if c not in {
