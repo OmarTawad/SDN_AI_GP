@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import os
 import sys
 import glob
 import yaml
@@ -36,6 +37,21 @@ def main():
     # The existing preprocess function handles glob resolution but expects a list or string
     # We pass the glob directly.
     
+    print(f"[DEBUG] CWD: {os.getcwd()}")
+    print(f"[DEBUG] args.labels: '{args.labels}'")
+    
+    # Force correct labels path if default seems wrong or to be safe
+    if args.labels == "data/labels.csv":
+        print("[WARN] Correcting labels path from data/labels.csv to labels/labels.csv")
+        args.labels = "labels/labels.csv"
+
+    print(f"[DEBUG] Using labels: {args.labels}")
+    # Force correct labels path if default seems wrong or to be safe
+    if args.labels == "data/labels.csv":
+        print("[WARN] Correcting labels path from data/labels.csv to labels/labels.csv")
+        args.labels = "labels/labels.csv"
+
+    print(f"[DEBUG] Using labels: {args.labels}")
     preprocess(cfg, args.pcaps, args.labels)
     
     print(f"Done.")

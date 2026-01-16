@@ -36,6 +36,18 @@ def main():
     # The existing preprocess function handles glob resolution but expects a list or string
     # We pass the glob directly.
     
+    # Force correct labels path if default seems wrong or to be safe
+    if args.labels == "data/labels.csv":
+        print("[WARN] Correcting labels path from data/labels.csv to labels/labels.csv")
+        args.labels = "labels/labels.csv"
+        
+    print(f"[DEBUG] Using labels: {args.labels}")
+    # Force correct labels path if default seems wrong or to be safe
+    if args.labels == "data/labels.csv":
+        print("[WARN] Correcting labels path from data/labels.csv to labels/labels.csv")
+        args.labels = "labels/labels.csv"
+        
+    print(f"[DEBUG] Using labels: {args.labels}")
     preprocess(cfg, args.pcaps, args.labels)
     
     print(f"Done.")
