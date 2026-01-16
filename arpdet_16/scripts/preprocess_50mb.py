@@ -14,7 +14,7 @@ def main():
     parser = argparse.ArgumentParser(description="Preprocess PCAP files with a 50MB limit per file (arpdet_16).")
     parser.add_argument("pcaps", help="Glob pattern for PCAP files (e.g. 'data/*.pcap')")
     parser.add_argument("--config", type=Path, default=Path("config.yaml"), help="Path to config.yaml")
-    parser.add_argument("--labels", default="data/labels.csv", help="Path to labels.csv")
+    parser.add_argument("--labels", default="labels/labels.csv", help="Path to labels.csv")
     
     args = parser.parse_args()
 
