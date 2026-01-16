@@ -37,8 +37,12 @@ def save_dataframe(path: Path, frame: pd.DataFrame) -> None:
     """Persist a dataframe to Parquet."""
 
     ensure_dir(path.parent)
-    # Force fastparquet to avoid PyArrow illegal instruction on older CPUs
-    frame.to_parquet(path, index=False, engine="fastparquet")
+    engine = os.environ.get("ARP_LSTM_PARQUET_ENGINE", "fastparquet").lower()
+    if engine == "auto":
+        # let pandas decide (usually pyarrow)
+        frame.to_parquet(path, index=False)
+    else:
+        frame.to_parquet(path, index=False, engine=engine)
 
 
 def load_dataframe(path: Path) -> pd.DataFrame:
