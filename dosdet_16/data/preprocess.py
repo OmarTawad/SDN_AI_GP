@@ -238,6 +238,7 @@ def main():
     cfg = yaml.safe_load(open(args.config))
 
     if args.limit > 0: 
+        print(f"[INFO] Limiting to {args.limit} windows per file.")
         cfg["preprocess"]["limit"] = args.limit
     
     pcaps = args.pcaps or cfg["preprocess"]["pcaps_glob"]
