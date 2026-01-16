@@ -1,7 +1,7 @@
 from __future__ import annotations
 import os
-import pyarrow as pa
-import pyarrow.parquet as pq
+# import pyarrow as pa
+# import pyarrow.parquet as pq
 import pandas as pd
 from typing import Iterable, Dict, List
 
