@@ -171,7 +171,8 @@ def preprocess(cfg: dict, pcaps_glob: str | List[str], labels_csv: str):
     # Per-file loop
     for p in tqdm(files, desc="PCAP files", unit="file"):
         base = os.path.basename(p)
-        windows = iter_windows(iter_rows_from_pcap(p), W, S, M)
+        byte_limit = cfg.get("preprocess", {}).get("byte_limit", None)
+        windows = iter_windows(iter_rows_from_pcap(p, byte_limit=byte_limit), W, S, M)
         limit = int(cfg.get("preprocess", {}).get("limit", 0))
         total_windows = 0
         
@@ -243,12 +244,17 @@ def main():
     ap.add_argument("--pcaps", nargs="+", default=None, help="Optional glob override; defaults to config preprocess.pcaps_glob")
     ap.add_argument("--labels", default=None, help="Optional labels.csv override; defaults to config preprocess.labels_csv")
     ap.add_argument("--limit", type=int, default=0, help="Limit number of windows to process per file")
+    ap.add_argument("--limit-mb", type=float, default=0, help="Limit processing to N megabytes of data per file")
     args = ap.parse_args()
     cfg = yaml.safe_load(open(args.config))
 
     if args.limit > 0: 
         print(f"[INFO] Limiting to {args.limit} windows per file.")
         cfg["preprocess"]["limit"] = args.limit
+    
+    if args.limit_mb > 0:
+        print(f"[INFO] Limiting to {args.limit_mb} MB per file.")
+        cfg["preprocess"]["byte_limit"] = int(args.limit_mb * 1024 * 1024)
     
     pcaps = args.pcaps or cfg["preprocess"]["pcaps_glob"]
     labels = args.labels or cfg["preprocess"]["labels_csv"]
