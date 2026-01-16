@@ -177,7 +177,10 @@ def preprocess(cfg: dict, pcaps_glob, labels_csv: str):
         limit = int(cfg.get("preprocess", {}).get("limit", 0))
         total_windows = 0
         
-        for (t0, t1, win_rows, bins) in tqdm(windows, desc=f"Windows: {base}", unit="win", leave=False):
+        pbar = tqdm(windows, desc=f"Windows: {base}", unit="win", leave=False)
+        for (t0, t1, win_rows, bins) in pbar:
+            if limit > 0:
+                pbar.set_postfix(valid=f"{total_windows}/{limit}")
             if limit > 0 and total_windows >= limit:
                  break
             if not win_rows:
