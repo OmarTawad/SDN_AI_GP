@@ -24,10 +24,10 @@ class FeaturePipeline:
 
     def process_single(self, pcap_path: Path, limit: int = 0) -> Tuple[pd.DataFrame, object]:
         limit_env = os.getenv("DOS_LIMIT_PKTS")
-        limit = int(limit_env) if (limit_env and limit_env.isdigit()) else None
+        pkt_limit = int(limit_env) if (limit_env and limit_env.isdigit()) else None
 
         t0 = time.perf_counter()
-        packets = read_pcap(pcap_path, limit=limit)
+        packets = read_pcap(pcap_path, limit=pkt_limit)
         t1 = time.perf_counter()
 
         builder = WindowBuilder(WindowingParams(
