@@ -27,12 +27,14 @@ class FeaturePipeline:
             "reply_claims": {},
         }
 
-    def process_single(self, pcap_path: Path, limit: int = 0) -> Tuple[pd.DataFrame, object]:
+    def process_single(self, pcap_path: Path, limit: int = 0, limit_mb: float = 0.0) -> Tuple[pd.DataFrame, object]:
         limit_env = os.getenv("ARP_LIMIT_PKTS")
         pkt_limit = int(limit_env) if (limit_env and limit_env.isdigit()) else None
+        
+        byte_limit = int(limit_mb * 1024 * 1024) if limit_mb > 0 else None
 
         t0 = time.perf_counter()
-        packets = read_pcap(pcap_path, limit=pkt_limit)
+        packets = read_pcap(pcap_path, limit=pkt_limit, byte_limit=byte_limit)
         t1 = time.perf_counter()
 
         builder = WindowBuilder(WindowingParams(
@@ -144,7 +146,7 @@ class FeaturePipeline:
             },
         }
 
-    def process_files(self, pcaps: Iterable[Path], out_dir: Path, limit: int = 0) -> Dict[str, object]:
+    def process_files(self, pcaps: Iterable[Path], out_dir: Path, limit: int = 0, limit_mb: float = 0.0) -> Dict[str, object]:
         ensure_dir(out_dir)
         paths = [Path(p) for p in pcaps]
 
@@ -154,7 +156,7 @@ class FeaturePipeline:
         for idx, p in enumerate(progress(paths, desc="Extracting", unit="pcap"), 1):
             try:
                 print(f"--> ({idx}/{len(paths)}) {p.name}: start", flush=True)
-                df, meta = self.process_single(p, limit=limit)
+                df, meta = self.process_single(p, limit=limit, limit_mb=limit_mb)
 
                 if not feature_cols:
                     feature_cols = [c for c in df.columns if c not in {

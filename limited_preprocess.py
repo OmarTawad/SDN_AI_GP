@@ -56,7 +56,7 @@ def main():
     env_arp["PYTHONPATH"] = os.path.join(base_dir, "arpdet") + ":" + env_arp.get("PYTHONPATH", "")
     
     run_command(
-        ["python3", "data/preprocess.py", "--config", "config.yaml", "--limit", "500", "--pcaps"] + [os.path.relpath(p, os.path.join(base_dir, "arpdet")) for p in arp_pcaps],
+        ["python3", "data/preprocess.py", "--config", "config.yaml", "--limit-mb", "50", "--pcaps"] + [os.path.relpath(p, os.path.join(base_dir, "arpdet")) for p in arp_pcaps],
         cwd=os.path.join(base_dir, "arpdet"),
         env=env_arp
     )
@@ -73,7 +73,7 @@ def main():
     env_dos_cnn["PYTHONPATH"] = os.path.join(base_dir, "dosdet") + ":" + env_dos_cnn.get("PYTHONPATH", "")
 
     run_command(
-        ["python3", "data/preprocess.py", "--config", "config.yaml", "--limit", "500", "--pcaps"] + [os.path.relpath(p, os.path.join(base_dir, "dosdet")) for p in dos_pcaps],
+        ["python3", "data/preprocess.py", "--config", "config.yaml", "--limit-mb", "50", "--pcaps"] + [os.path.relpath(p, os.path.join(base_dir, "dosdet")) for p in dos_pcaps],
         cwd=os.path.join(base_dir, "dosdet"),
         env=env_dos_cnn
     )
@@ -103,7 +103,7 @@ def main():
                 "python3", "-m", "arp_detector.cli", "extract-features",
                 pcap, # Just passing the file path as the 'glob'
                 "--config-path", "configs/config.yaml",
-                "--limit", "500"
+                "--limit-mb", "50"
             ],
             cwd=arp_lstm_dir,
             env=env
@@ -121,7 +121,7 @@ def main():
                 "python3", "-m", "dos_detector.cli", "extract-features",
                 pcap,
                 "--config-path", "configs/config.yaml",
-                "--limit", "500"
+                "--limit-mb", "50"
             ],
             cwd=neural_lstm_dir,
             env=env_dos
