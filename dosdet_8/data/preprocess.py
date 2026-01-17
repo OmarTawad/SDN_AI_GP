@@ -154,7 +154,7 @@ def preprocess(cfg: dict, pcaps_glob, labels_csv: str):
 
             # Flush by batch size
             if len(buf["file"]) >= BATCH_ROWS:
-                _flush_batch()
+                _flush_shard()
 
             # Rotate shard if size exceeds limit
             if bytes_written_in_shard >= shard_max_mb * 1024 * 1024:
@@ -172,7 +172,7 @@ def preprocess(cfg: dict, pcaps_glob, labels_csv: str):
 
     # Flush any trailing rows
     if buf["file"]:
-        _flush_batch()
+        _flush_shard()
     # Close last shard
     if shard_writer and hasattr(shard_writer, "close"):
         shard_writer.close()
