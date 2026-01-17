@@ -17,6 +17,9 @@ os.environ.setdefault("NUMEXPR_NUM_THREADS", "2")
 os.environ.setdefault("TORCH_CPP_LOG_LEVEL", "ERROR")
 os.environ.setdefault("TORCH_DISABLE_NNPACK", "1")
 
+import sys
+sys.set_int_max_str_digits(50000)
+
 import numpy as np
 import torch
 import yaml
