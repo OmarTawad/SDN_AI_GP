@@ -20,6 +20,8 @@ os.environ.setdefault("TORCH_DISABLE_NNPACK", "1")
 import sys
 sys.set_int_max_str_digits(50000)
 
+import pandas as pd
+import pandas as pd
 import numpy as np
 import torch
 import yaml
@@ -63,7 +65,9 @@ def _test_paths(cfg: dict) -> List[str]:
     stats = []
     for rel in shard_rel:
         path = _resolve_path(rel)
-        pos = int(_read_parquet(path, columns=["y"])["y"].sum())
+        df_temp = _read_parquet(path, columns=["y"])
+        df_temp["y"] = pd.to_numeric(df_temp["y"], errors='coerce').fillna(0)
+        pos = int(df_temp["y"].sum())
         stats.append({"path": str(path), "pos": pos})
     stats.sort(key=lambda s: (-s["pos"], s["path"]))
 
