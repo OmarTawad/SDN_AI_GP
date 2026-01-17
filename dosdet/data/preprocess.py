@@ -235,6 +235,9 @@ def preprocess(cfg: dict, pcaps_glob: str, labels_csv: str):
     if shard_writer and hasattr(shard_writer, "close"):
         shard_writer.close()
         manifest["files"].append({"path": shard_path})
+    elif not use_pyarrow and bytes_written_in_shard > 0:
+         # fastparquet/csv case: file is already written, just need to record it
+         manifest["files"].append({"path": shard_path})
 
     with open(manifest_path, "w") as f:
         json.dump(manifest, f, indent=2)

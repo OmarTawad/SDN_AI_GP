@@ -47,11 +47,17 @@ def run_dosdet_style(proj_dir, script_name):
         yaml.dump(cfg, f)
 
     # Run evaluation command
+    # Env vars to fix OMP/Torch threading issues
+    env = os.environ.copy()
+    env["OMP_NUM_THREADS"] = "1"
+    env["MKL_NUM_THREADS"] = "1"
+    env["OPENBLAS_NUM_THREADS"] = "1"
+    
     cmd = ["python3", script_name, "--config", temp_config_name]
     print(f"[{proj_dir.name}] Running: {' '.join(cmd)}")
     
     try:
-        subprocess.run(cmd, cwd=proj_dir, check=True)
+        subprocess.run(cmd, cwd=proj_dir, check=True, env=env)
         print(f"[{proj_dir.name}] SUCCESS")
     except subprocess.CalledProcessError:
         print(f"[{proj_dir.name}] FAILED")
@@ -73,8 +79,12 @@ def run_neural_style(proj_dir, script_name):
     cmd = ["python3", script_name]
     print(f"[{proj_dir.name}] Running: {' '.join(cmd)}")
     
+    # Needs src in PYTHONPATH
+    env = os.environ.copy()
+    env["PYTHONPATH"] = f"{proj_dir}/src:{env.get('PYTHONPATH', '')}"
+    
     try:
-        subprocess.run(cmd, cwd=proj_dir, check=True)
+        subprocess.run(cmd, cwd=proj_dir, check=True, env=env)
         print(f"[{proj_dir.name}] SUCCESS")
     except subprocess.CalledProcessError:
         print(f"[{proj_dir.name}] FAILED")
