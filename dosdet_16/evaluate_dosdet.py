@@ -58,7 +58,7 @@ def _resolve_path(path: str | Path) -> Path:
 def _test_paths(cfg: dict) -> List[str]:
     cache_dir = _resolve_path(cfg["paths"]["cache_dir"])
     manifest = load_manifest(str(cache_dir))
-    shard_rel = [entry["path"] for entry in manifest.get("files", [])]
+    shard_rel = [entry["path"] for entry in manifest.get("files", []) if entry.get("path")]
     if not shard_rel:
         raise FileNotFoundError("No parquet shards listed in cache/manifest.json.")
 
