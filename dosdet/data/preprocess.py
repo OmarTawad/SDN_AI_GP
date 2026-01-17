@@ -176,11 +176,15 @@ def preprocess(cfg: dict, pcaps_glob: str, labels_csv: str):
     for p in tqdm(files, desc="PCAP files", unit="file"):
         base = os.path.basename(p)
         byte_limit = cfg.get("preprocess", {}).get("byte_limit", None)
+        
+        # Explicitly check if file is readable to catch broken symlinks early
         try:
-            windows = iter_windows(iter_rows_from_pcap(p, ssdp_v4, ssdp_v6, byte_limit=byte_limit), W, S, M)
-        except (FileNotFoundError, PermissionError) as e:
+            with open(p, 'rb'): pass
+        except Exception as e:
             print(f"[WARN] Skipping unreadable file {p}: {e}")
             continue
+
+        windows = iter_windows(iter_rows_from_pcap(p, ssdp_v4, ssdp_v6, byte_limit=byte_limit), W, S, M)
             
         limit = int(cfg.get("preprocess", {}).get("limit", 0))
         total_windows = 0

@@ -147,17 +147,15 @@ def preprocess(cfg: dict, pcaps_glob: str | List[str], labels_csv: str):
     for p in tqdm(files, desc="PCAP files", unit="file"):
         base = os.path.basename(p)
         byte_limit = cfg.get("preprocess", {}).get("byte_limit", None)
+        
+        # Explicitly check if file is readable to catch broken symlinks early
         try:
-             # Assuming args for arpdet match dosdet but maybe without ssdp
-             # Checking existing code: iter_rows_from_pcap(p, byte_limit=byte_limit)
-             # Wait, arpdet might not have ssdp args. I should confirm by checking *its* content.
-             # User view showed: iter_windows(iter_rows_from_pcap(p, byte_limit=byte_limit), W, S, M)
-             # So I use that signature.
-             
-            windows = iter_windows(iter_rows_from_pcap(p, byte_limit=byte_limit), W, S, M)
-        except (FileNotFoundError, PermissionError) as e:
+            with open(p, 'rb'): pass
+        except Exception as e:
             print(f"[WARN] Skipping unreadable file {p}: {e}")
             continue
+
+        windows = iter_windows(iter_rows_from_pcap(p, byte_limit=byte_limit), W, S, M)
 
         limit = int(cfg.get("preprocess", {}).get("limit", 0))
         total_windows = 0
