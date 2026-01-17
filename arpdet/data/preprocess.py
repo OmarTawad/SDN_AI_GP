@@ -172,7 +172,12 @@ def preprocess(cfg: dict, pcaps_glob: str | List[str], labels_csv: str):
     for p in tqdm(files, desc="PCAP files", unit="file"):
         base = os.path.basename(p)
         byte_limit = cfg.get("preprocess", {}).get("byte_limit", None)
-        windows = iter_windows(iter_rows_from_pcap(p, byte_limit=byte_limit), W, S, M)
+        try:
+            windows = iter_windows(iter_rows_from_pcap(p, ssdp_v4, ssdp_v6, byte_limit=byte_limit), W, S, M)
+        except (FileNotFoundError, PermissionError) as e:
+            print(f"[WARN] Skipping unreadable file {p}: {e}")
+            continue
+
         limit = int(cfg.get("preprocess", {}).get("limit", 0))
         total_windows = 0
         
