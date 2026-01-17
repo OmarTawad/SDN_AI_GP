@@ -35,7 +35,7 @@ def main():
         pcaps=args.pcaps,
         out_dir=cfg.paths.processed_dir,
         limit=0, # No packet/window limit
-        limit_mb=limit_mb # Byte limit
+        limit_mb=None # Byte limit
     )
     
     print(f"Done.")

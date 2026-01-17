@@ -13,7 +13,8 @@ def main():
     
     # Enforce 50MB limit
     print(f"[INFO] Enforcing 50MB limit per file via configuration override.")
-    cfg["preprocess"]["byte_limit"] = int(50.0 * 1024 * 1024)
+    # cfg["preprocess"]["byte_limit"] = int(50.0 * 1024 * 1024)
+    cfg["preprocess"]["byte_limit"] = None
     cfg["preprocess"]["limit"] = 0 
 
     labels = cfg["preprocess"].get("labels_csv", "labels/labels.csv")
