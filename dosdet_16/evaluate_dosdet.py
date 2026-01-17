@@ -129,10 +129,7 @@ def _load_artifacts(art_dir: Path, cfg: dict, device: torch.device, amp_enabled:
     checkpoint = torch.load(art_dir / "model_best.pt", map_location=device)
     model.load_state_dict(checkpoint["model"])
     model.to(device)
-    if amp_enabled:
-        model = model.half()
-    else:
-        model = model.float()
+    model = model.float()
     model.eval()
     calib_path = art_dir / "calibration.json"
     if calib_path.exists():
@@ -169,9 +166,9 @@ def _evaluate(
             stat_scaled = scaler.transform(stat_np)
             stat_slim = slimmer.transform(stat_scaled).astype(np.float32)
             static_t = torch.from_numpy(stat_slim).to(device, non_blocking=True)
-            if amp_enabled:
-                seq = seq.half()
-                static_t = static_t.half()
+            # Always run inference in float32 on CPU to avoid slow_conv2d_cpu error
+            seq = seq.float()
+            static_t = static_t.float()
             logits = model(seq, static_t)["logits"].squeeze(-1)
             logits = logits.float() / temperature
             batch_prob = torch.sigmoid(logits).cpu().numpy()
