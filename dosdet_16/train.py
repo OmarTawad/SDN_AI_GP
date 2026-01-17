@@ -165,6 +165,14 @@ class CachedDataset(Dataset):
                     return np.array(json.loads(val), dtype=np.float32)
                 except Exception:
                     pass
+                # Handle numpy-style string "[ 1.2  3.4 \n 5.6 ]"
+                try:
+                    s = str(val).replace('[', '').replace(']', '').replace('\n', ' ')
+                    # Heuristic: if comma exists, split by comma, else split by whitespace
+                    parts = s.split(',') if ',' in s else s.split()
+                    return np.array([float(x) for x in parts], dtype=np.float32)
+                except Exception:
+                    pass
             return np.array(val, dtype=np.float32)
 
         if isinstance(seq_raw, (bytes, bytearray, memoryview)):
