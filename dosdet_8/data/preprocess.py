@@ -89,8 +89,8 @@ def preprocess(cfg: dict, pcaps_glob, labels_csv: str):
             engine="fastparquet",
             compression="zstd",
             index=False,
-            # Explicitly tell fastparquet how to encode the list-like columns
-            object_encoding={'seq': 'json', 'static': 'json'}
+            # Explicitly tell fastparquet how to encode the list-like columns (now strings)
+            object_encoding={'seq': 'utf8', 'static': 'utf8'}
         )
         manifest["files"].append({"path": shard_path})
         with open(manifest_path, "w") as f:
