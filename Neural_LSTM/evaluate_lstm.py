@@ -24,6 +24,10 @@ from sklearn.metrics import (
 )
 from torch.utils.data import DataLoader
 
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parent / "src"))
+
 from dos_detector.config import load_config
 from dos_detector.data.dataset import StreamingSequenceDataset, collate_fn
 from dos_detector.models.supervised import SequenceClassifier
