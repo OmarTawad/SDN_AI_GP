@@ -174,7 +174,12 @@ def preprocess(cfg: dict, pcaps_glob: str, labels_csv: str):
     for p in tqdm(files, desc="PCAP files", unit="file"):
         base = os.path.basename(p)
         byte_limit = cfg.get("preprocess", {}).get("byte_limit", None)
-        windows = iter_windows(iter_rows_from_pcap(p, ssdp_v4, ssdp_v6, byte_limit=byte_limit), W, S, M)
+        try:
+            windows = iter_windows(iter_rows_from_pcap(p, ssdp_v4, ssdp_v6, byte_limit=byte_limit), W, S, M)
+        except (FileNotFoundError, PermissionError) as e:
+            print(f"[WARN] Skipping unreadable file {p}: {e}")
+            continue
+            
         limit = int(cfg.get("preprocess", {}).get("limit", 0))
         total_windows = 0
         
@@ -235,6 +240,9 @@ def preprocess(cfg: dict, pcaps_glob: str, labels_csv: str):
     if shard_writer and hasattr(shard_writer, "close"):
         shard_writer.close()
         manifest["files"].append({"path": shard_path})
+    elif not use_pyarrow and bytes_written_in_shard > 0:
+         # fastparquet/csv case: file is already written, just need to record it
+         manifest["files"].append({"path": shard_path})
 
     with open(manifest_path, "w") as f:
         json.dump(manifest, f, indent=2)

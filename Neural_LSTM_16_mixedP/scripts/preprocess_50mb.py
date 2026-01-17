@@ -10,7 +10,7 @@ from dos_detector.config import load_config
 from dos_detector.data.processor import FeaturePipeline
 
 def main():
-    parser = argparse.ArgumentParser(description="Preprocess PCAP files with a 50MB limit per file (Neural_LSTM_16_mixedP).")
+    parser = argparse.ArgumentParser(description="Preprocess PCAP files with a 50MB limit per file.")
     parser.add_argument("pcaps", nargs="+", help="List of PCAP files to process")
     parser.add_argument("--config", type=Path, default=Path("configs/config.yaml"), help="Path to config.yaml")
     
@@ -31,7 +31,6 @@ def main():
     pipeline = FeaturePipeline(cfg)
     
     # Process
-    # We use process_files which handles the iteration and saving
     pipeline.process_files(
         pcaps=args.pcaps,
         out_dir=cfg.paths.processed_dir,

@@ -31,7 +31,6 @@ def main():
     pipeline = FeaturePipeline(cfg)
     
     # Process
-    # We use process_files which handles the iteration and saving
     pipeline.process_files(
         pcaps=args.pcaps,
         out_dir=cfg.paths.processed_dir,

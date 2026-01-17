@@ -178,7 +178,12 @@ def preprocess(cfg: dict, pcaps_glob, labels_csv: str):
     for p in tqdm(files, desc="PCAP files", unit="file"):
         base = os.path.basename(p)
         byte_limit = cfg.get("preprocess", {}).get("byte_limit", None)
-        windows = iter_windows(iter_rows_from_pcap(p, ssdp_v4, ssdp_v6, byte_limit=byte_limit), W, S, M)
+        try:
+            windows = iter_windows(iter_rows_from_pcap(p, ssdp_v4, ssdp_v6, byte_limit=byte_limit), W, S, M)
+        except (FileNotFoundError, PermissionError) as e:
+            print(f"[WARN] Skipping unreadable file {p}: {e}")
+            continue
+            
         limit = int(cfg.get("preprocess", {}).get("limit", 0))
         total_windows = 0
         
@@ -209,23 +214,39 @@ def preprocess(cfg: dict, pcaps_glob, labels_csv: str):
             buf["M"].append(int(M))
             buf["K_seq"].append(int(seq_np.shape[1]))
             buf["K_static"].append(int(static_vec.size))
+            buf["seq"].append(seq_np.astype(np.float32).reshape(-1))
+            buf["static"].append(static_vec.astype(np.float32))
 
-            seq_list = seq_np.astype(np.float32).reshape(-1).tolist()
-            static_list = static_vec.astype(np.float32).tolist()
-            buf["seq"].append(seq_list)
-            buf["static"].append(static_list)
             total_windows += 1
-            bytes_in_buffer += _estimate_row_bytes(seq_list, static_list)
 
-            # Flush by batch size or size threshold
-            if len(buf["file"]) >= BATCH_ROWS or bytes_in_buffer >= shard_max_mb * 1024 * 1024:
-                _flush_shard()
+            # Flush by batch size
+            if len(buf["file"]) >= BATCH_ROWS:
+                _flush_batch()
+
+            # Rotate shard if size exceeds limit
+            if bytes_written_in_shard >= shard_max_mb * 1024 * 1024:
+                # finalize current shard
+                if shard_writer and hasattr(shard_writer, "close"):
+                    shard_writer.close()
+                manifest["files"].append({"path": shard_path})
+                # persist manifest incrementally (crash-safe)
+                with open(manifest_path, "w") as f:
+                    json.dump(manifest, f, indent=2)
+                # open next shard
+                _open_new_shard()
 
         # end file loop
 
     # Flush any trailing rows
     if buf["file"]:
-        _flush_shard()
+        _flush_batch()
+    # Close last shard
+    if shard_writer and hasattr(shard_writer, "close"):
+        shard_writer.close()
+        manifest["files"].append({"path": shard_path})
+    elif not use_pyarrow and bytes_written_in_shard > 0:
+         # fastparquet/csv case: file is already written, just need to record it
+         manifest["files"].append({"path": shard_path})
 
     with open(manifest_path, "w") as f:
         json.dump(manifest, f, indent=2)

@@ -172,7 +172,18 @@ def preprocess(cfg: dict, pcaps_glob: str | List[str], labels_csv: str):
     for p in tqdm(files, desc="PCAP files", unit="file"):
         base = os.path.basename(p)
         byte_limit = cfg.get("preprocess", {}).get("byte_limit", None)
-        windows = iter_windows(iter_rows_from_pcap(p, byte_limit=byte_limit), W, S, M)
+        try:
+             # Assuming args for arpdet match dosdet but maybe without ssdp
+             # Checking existing code: iter_rows_from_pcap(p, byte_limit=byte_limit)
+             # Wait, arpdet might not have ssdp args. I should confirm by checking *its* content.
+             # User view showed: iter_windows(iter_rows_from_pcap(p, byte_limit=byte_limit), W, S, M)
+             # So I use that signature.
+             
+            windows = iter_windows(iter_rows_from_pcap(p, byte_limit=byte_limit), W, S, M)
+        except (FileNotFoundError, PermissionError) as e:
+            print(f"[WARN] Skipping unreadable file {p}: {e}")
+            continue
+
         limit = int(cfg.get("preprocess", {}).get("limit", 0))
         total_windows = 0
         
@@ -184,9 +195,9 @@ def preprocess(cfg: dict, pcaps_glob: str | List[str], labels_csv: str):
                  break
             if not win_rows:
                 continue
-            seq_np, extras = compute_sequence_features(win_rows, bins, M)
+            seq_np, extras = compute_sequence_features(win_rows, bins, M, top_ports)
             static_vec, static_names, snaps = compute_static_features(
-                win_rows, M, extras, W
+                win_rows, M, extras["per_bin_total_pkts"], top_ports, W
             )
             y, fam = _label_for(label_map, base, t0)
 
@@ -233,6 +244,9 @@ def preprocess(cfg: dict, pcaps_glob: str | List[str], labels_csv: str):
     if shard_writer and hasattr(shard_writer, "close"):
         shard_writer.close()
         manifest["files"].append({"path": shard_path})
+    elif not use_pyarrow and bytes_written_in_shard > 0:
+         # fastparquet/csv case: file is already written, just need to record it
+         manifest["files"].append({"path": shard_path})
 
     with open(manifest_path, "w") as f:
         json.dump(manifest, f, indent=2)
