@@ -243,7 +243,7 @@ def preprocess(cfg: dict, pcaps_glob, labels_csv: str):
 
     # Flush any trailing rows
     if buf["file"]:
-        _flush_batch()
+        _flush_shard()
     # Close last shard
     if shard_writer and hasattr(shard_writer, "close"):
         shard_writer.close()
