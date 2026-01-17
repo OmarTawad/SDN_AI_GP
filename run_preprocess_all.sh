@@ -1,6 +1,7 @@
 #!/bin/bash
 set -e
 
+<<<<<<< HEAD
 # Default to current directory, but allow override
 DATA_ROOT="${DATA_ROOT:-$(pwd)}"
 
@@ -27,6 +28,23 @@ if [ -f "$PCAP_DIR/attack.pcap" ]; then
 else
     ARP_PCAPS="$PCAP_DIR/attack.pcap $PCAP_DIR/normal1.pcap"
 fi
+=======
+# Data root is the current directory (SDN_AI_GP)
+DATA_ROOT=$(pwd)
+# PCAPs are in samples/
+PCAP_DIR="$DATA_ROOT/samples"
+
+echo "Using PCAP directory: $PCAP_DIR"
+
+if [ ! -d "$PCAP_DIR" ]; then
+    echo "ERROR: $PCAP_DIR does not exist!"
+    exit 1
+fi
+
+# Define PCAP sets
+DOS_PCAPS="$PCAP_DIR/mixed1.pcap $PCAP_DIR/normal1.pcap"
+ARP_PCAPS="$PCAP_DIR/attack.pcap $PCAP_DIR/normal1.pcap"
+>>>>>>> 8cc17d12c755a4d47fe0b6bffdc527e73f778197
 
 # Python path helper
 export PYTHONPATH=$PYTHONPATH
@@ -36,7 +54,10 @@ echo "Starting 50MB-limited preprocessing for all projects..."
 # --- DOSDET Experts ---
 # dosdet (CNN)
 echo "[dosdet] Preprocessing..."
+<<<<<<< HEAD
 ls -l "$PCAP_DIR"/*.pcap
+=======
+>>>>>>> 8cc17d12c755a4d47fe0b6bffdc527e73f778197
 cd $DATA_ROOT/dosdet
 python3 scripts/preprocess_50mb.py "$PCAP_DIR/*.pcap" --labels labels/labels.csv
 
@@ -73,6 +94,10 @@ python3 scripts/preprocess_50mb.py $DOS_PCAPS
 # arpdet (CNN)
 echo "[arpdet] Preprocessing..."
 cd $DATA_ROOT/arpdet
+<<<<<<< HEAD
+=======
+# Note: arpdet expects glob pattern
+>>>>>>> 8cc17d12c755a4d47fe0b6bffdc527e73f778197
 python3 scripts/preprocess_50mb.py "$PCAP_DIR/*.pcap"
 
 # arpdet_16
