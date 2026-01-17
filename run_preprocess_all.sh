@@ -1,20 +1,34 @@
 #!/bin/bash
 set -e
 
-# Define paths to pcaps (assumes they are in /home/roots/SDN_AI_GP/samples or similar, 
-# but previous context suggests we should rely on the user having them in a standard location 
-# or passed explicitly. The user's prompt implies we should know where they are.
-# Based on user's previous logs, they seem to be in `../samples/` or similar relative to project?
-# Actually, the user's environment has `mixed1.pcap`, `normal1.pcap`.
-# I will assume they are absolute paths or relative to common root. 
-# Best guess: /home/roots/SDN_AI_GP/mixed1.pcap etc? 
-# Or just rely on the fact that existing configs pointed to "samples/*.pcap".
-# BUT for the script I need to be precise. 
-# Let's assume they are in /home/roots/SDN_AI_GP/ as per previous context "dosdet uses mixed1.pcap and normal1.pcap".
+# Default to current directory, but allow override
+DATA_ROOT="${DATA_ROOT:-$(pwd)}"
 
-DATA_ROOT="/home/roots/SDN_AI_GP"
-DOS_PCAPS="$DATA_ROOT/mixed1.pcap $DATA_ROOT/normal1.pcap"
-ARP_PCAPS="$DATA_ROOT/attack.pcap $DATA_ROOT/normal1.pcap"
+echo "Looking for PCAP files in $DATA_ROOT..."
+
+# Detect location of key files
+if [ -f "$DATA_ROOT/mixed1.pcap" ]; then
+    echo "Found PCAPs in $DATA_ROOT"
+    PCAP_DIR="$DATA_ROOT"
+elif [ -f "$DATA_ROOT/samples/mixed1.pcap" ]; then
+    echo "Found PCAPs in $DATA_ROOT/samples"
+    PCAP_DIR="$DATA_ROOT/samples"
+else
+    echo "ERROR: Could not find 'mixed1.pcap' in $DATA_ROOT or $DATA_ROOT/samples."
+    echo "Please ensure PCAP files (mixed1.pcap, normal1.pcap, attack.pcap) are present."
+    echo "You can set DATA_ROOT to the directory containing them."
+    exit 1
+fi
+
+DOS_PCAPS="$PCAP_DIR/mixed1.pcap $PCAP_DIR/normal1.pcap"
+# Adjust ARP PCAPS based on availability
+if [ -f "$PCAP_DIR/attack.pcap" ]; then
+    ARP_PCAPS="$PCAP_DIR/attack.pcap $PCAP_DIR/normal1.pcap"
+else
+    # Fallback or assume mixed1 might be used? User said "attack.pcap" for ARP.
+    # If not found, warn but don't crash yet, let the tool crash if needed.
+    ARP_PCAPS="$PCAP_DIR/attack.pcap $PCAP_DIR/normal1.pcap"
+fi
 
 # Python path helper
 export PYTHONPATH=$PYTHONPATH
@@ -25,17 +39,17 @@ echo "Starting 50MB-limited preprocessing for all projects..."
 # dosdet (CNN)
 echo "[dosdet] Preprocessing..."
 cd $DATA_ROOT/dosdet
-python3 scripts/preprocess_50mb.py "$DATA_ROOT/*.pcap" --labels labels/labels.csv
+python3 scripts/preprocess_50mb.py "$PCAP_DIR/*.pcap" --labels labels/labels.csv
 
 # dosdet_16
 echo "[dosdet_16] Preprocessing..."
 cd $DATA_ROOT/dosdet_16
-python3 scripts/preprocess_50mb.py "$DATA_ROOT/*.pcap" --labels labels/labels.csv
+python3 scripts/preprocess_50mb.py "$PCAP_DIR/*.pcap" --labels labels/labels.csv
 
 # dosdet_8
 echo "[dosdet_8] Preprocessing..."
 cd $DATA_ROOT/dosdet_8
-python3 scripts/preprocess_50mb.py "$DATA_ROOT/*.pcap" --labels labels/labels.csv
+python3 scripts/preprocess_50mb.py "$PCAP_DIR/*.pcap" --labels labels/labels.csv
 
 # Neural_LSTM (LSTM) - accepts list of files
 echo "[Neural_LSTM] Preprocessing..."
@@ -61,34 +75,34 @@ python3 scripts/preprocess_50mb.py $DOS_PCAPS
 echo "[arpdet] Preprocessing..."
 cd $DATA_ROOT/arpdet
 # Note: arpdet expects glob pattern
-python3 scripts/preprocess_50mb.py "$DATA_ROOT/*.pcap"
+python3 scripts/preprocess_50mb.py "$PCAP_DIR/*.pcap"
 
 # arpdet_16
 echo "[arpdet_16] Preprocessing..."
 cd $DATA_ROOT/arpdet_16
-python3 scripts/preprocess_50mb.py "$DATA_ROOT/*.pcap"
+python3 scripts/preprocess_50mb.py "$PCAP_DIR/*.pcap"
 
 # arpdet_8
 echo "[arpdet_8] Preprocessing..."
 cd $DATA_ROOT/arpdet_8
-python3 scripts/preprocess_50mb.py "$DATA_ROOT/*.pcap"
+python3 scripts/preprocess_50mb.py "$PCAP_DIR/*.pcap"
 
 # ARP_LSTM (LSTM) - accepts glob pattern string
 echo "[ARP_LSTM] Preprocessing..."
 cd $DATA_ROOT/ARP_LSTM
 export PYTHONPATH=$DATA_ROOT/ARP_LSTM/src
-python3 scripts/preprocess_50mb.py "$DATA_ROOT/*.pcap"
+python3 scripts/preprocess_50mb.py "$PCAP_DIR/*.pcap"
 
 # ARP_LSTM_16
 echo "[ARP_LSTM_16] Preprocessing..."
 cd $DATA_ROOT/ARP_LSTM_16
 export PYTHONPATH=$DATA_ROOT/ARP_LSTM_16/src
-python3 scripts/preprocess_50mb.py "$DATA_ROOT/*.pcap"
+python3 scripts/preprocess_50mb.py "$PCAP_DIR/*.pcap"
 
 # ARP_LSTM_8
 echo "[ARP_LSTM_8] Preprocessing..."
 cd $DATA_ROOT/ARP_LSTM_8
 export PYTHONPATH=$DATA_ROOT/ARP_LSTM_8/src
-python3 scripts/preprocess_50mb.py "$DATA_ROOT/*.pcap"
+python3 scripts/preprocess_50mb.py "$PCAP_DIR/*.pcap"
 
 echo "All preprocessing tasks complete."

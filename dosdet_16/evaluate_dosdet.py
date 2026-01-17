@@ -31,7 +31,7 @@ from train import CachedDataset, collate, load_manifest, _read_parquet
 torch.set_num_threads(min(2, max(1, os.cpu_count() or 1)))
 try:
     torch.set_num_interop_threads(1)
-except AttributeError:
+except (AttributeError, RuntimeError):
     pass
 try:
     if hasattr(torch.backends.nnpack, "set_flags"):
