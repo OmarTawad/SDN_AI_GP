@@ -89,8 +89,8 @@ def preprocess(cfg: dict, pcaps_glob, labels_csv: str):
             engine="fastparquet",
             compression="zstd",
             index=False,
-            # Explicitly tell fastparquet how to encode the list-like columns (now strings)
-            object_encoding={'seq': 'utf8', 'static': 'utf8'}
+            # Explicitly tell fastparquet how to encode the list-like columns (now bytes)
+            object_encoding={'seq': 'bytes', 'static': 'bytes'}
         )
         manifest["files"].append({"path": shard_path})
         with open(manifest_path, "w") as f:
@@ -149,8 +149,8 @@ def preprocess(cfg: dict, pcaps_glob, labels_csv: str):
             buf["M"].append(int(M))
             buf["K_seq"].append(int(seq_np.shape[1]))
             buf["K_static"].append(int(static_vec.size))
-            buf["seq"].append(json.dumps(seq_np.astype(np.float32).reshape(-1).tolist()))
-            buf["static"].append(json.dumps(static_vec.astype(np.float32).tolist()))
+            buf["seq"].append(json.dumps(seq_np.astype(np.float32).reshape(-1).tolist()).encode('utf-8'))
+            buf["static"].append(json.dumps(static_vec.astype(np.float32).tolist()).encode('utf-8'))
 
             total_windows += 1
 
