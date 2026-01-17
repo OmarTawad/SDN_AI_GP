@@ -135,10 +135,10 @@ def preprocess(cfg: dict, pcaps_glob, labels_csv: str):
             if shard_path is None:
                 _open_new_shard()
 
-            # Append to CSV, create header if file doesn't exist
-            header = not os.path.exists(shard_path) or bytes_written_in_shard == 0
+            # Append to CSV, create header ONLY if file is empty
+            header = not os.path.exists(shard_path) or os.path.getsize(shard_path) == 0
             df.to_csv(shard_path, mode="a", header=header, index=False)
-            bytes_written_in_shard += os.path.getsize(shard_path) - (os.path.getsize(shard_path) if header else 0) # rough estimate
+            bytes_written_in_shard = os.path.getsize(shard_path)
         elif use_pyarrow:
             if shard_writer is None: # First time, or after a full shard was closed
                 _open_new_shard()
