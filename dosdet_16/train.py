@@ -52,7 +52,7 @@ def _read_parquet(path: str, columns: List[str] | None = None) -> pd.DataFrame:
     Helper that favours engines compatible with low-feature CPUs.
     Defaults to fastparquet when available and falls back to pyarrow.
     """
-    if path.endswith(".csv"):
+    if str(path).endswith(".csv"):
          try:
              # Just read with pandas, JSON parsing happens in Dataset if needed
              return pd.read_csv(path, usecols=columns if columns else None)
