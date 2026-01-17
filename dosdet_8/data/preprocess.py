@@ -149,8 +149,8 @@ def preprocess(cfg: dict, pcaps_glob, labels_csv: str):
             buf["M"].append(int(M))
             buf["K_seq"].append(int(seq_np.shape[1]))
             buf["K_static"].append(int(static_vec.size))
-            buf["seq"].append(seq_np.astype(np.float32).reshape(-1).tolist())
-            buf["static"].append(static_vec.astype(np.float32).tolist())
+            buf["seq"].append(json.dumps(seq_np.astype(np.float32).reshape(-1).tolist()))
+            buf["static"].append(json.dumps(static_vec.astype(np.float32).tolist()))
 
             total_windows += 1
 
