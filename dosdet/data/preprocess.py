@@ -57,6 +57,8 @@ def preprocess(cfg: dict, pcaps_glob: str, labels_csv: str):
     label_map = _labels_map(labels_csv)
 
     files = sorted(glob.glob(pcaps_glob))
+    print(f"[DEBUG] Glob pattern: {pcaps_glob}")
+    print(f"[DEBUG] Found files: {files}")
     assert files, f"No pcaps matched: {pcaps_glob}"
 
     # Writer selection (default to fastparquet to avoid CPU instruction issues)

@@ -38,6 +38,7 @@ echo "Starting 50MB-limited preprocessing for all projects..."
 # --- DOSDET Experts ---
 # dosdet (CNN)
 echo "[dosdet] Preprocessing..."
+ls -l "$PCAP_DIR"/*.pcap
 cd $DATA_ROOT/dosdet
 python3 scripts/preprocess_50mb.py "$PCAP_DIR/*.pcap" --labels labels/labels.csv
 
