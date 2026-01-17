@@ -225,7 +225,7 @@ def preprocess(cfg: dict, pcaps_glob, labels_csv: str):
 
             # Flush by batch size
             if len(buf["file"]) >= BATCH_ROWS:
-                _flush_batch()
+                _flush_shard()
 
             # Rotate shard if size exceeds limit
             if bytes_written_in_shard >= shard_max_mb * 1024 * 1024:

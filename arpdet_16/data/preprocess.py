@@ -193,9 +193,9 @@ def preprocess(cfg: dict, pcaps_glob: str | List[str], labels_csv: str):
                  break
             if not win_rows:
                 continue
-            seq_np, extras = compute_sequence_features(win_rows, bins, M, top_ports)
+            seq_np, extras = compute_sequence_features(win_rows, bins, M)
             static_vec, static_names, snaps = compute_static_features(
-                win_rows, M, extras["per_bin_total_pkts"], top_ports, W
+                win_rows, M, extras, W
             )
             y, fam = _label_for(label_map, base, t0)
 
