@@ -1,34 +1,21 @@
 #!/bin/bash
 set -e
 
-# Default to current directory, but allow override
-DATA_ROOT="${DATA_ROOT:-$(pwd)}"
+# Data root is the current directory (SDN_AI_GP)
+DATA_ROOT=$(pwd)
+# PCAPs are in samples/
+PCAP_DIR="$DATA_ROOT/samples"
 
-echo "Looking for PCAP files in $DATA_ROOT..."
+echo "Using PCAP directory: $PCAP_DIR"
 
-# Detect location of key files
-if [ -f "$DATA_ROOT/mixed1.pcap" ]; then
-    echo "Found PCAPs in $DATA_ROOT"
-    PCAP_DIR="$DATA_ROOT"
-elif [ -f "$DATA_ROOT/samples/mixed1.pcap" ]; then
-    echo "Found PCAPs in $DATA_ROOT/samples"
-    PCAP_DIR="$DATA_ROOT/samples"
-else
-    echo "ERROR: Could not find 'mixed1.pcap' in $DATA_ROOT or $DATA_ROOT/samples."
-    echo "Please ensure PCAP files (mixed1.pcap, normal1.pcap, attack.pcap) are present."
-    echo "You can set DATA_ROOT to the directory containing them."
+if [ ! -d "$PCAP_DIR" ]; then
+    echo "ERROR: $PCAP_DIR does not exist!"
     exit 1
 fi
 
+# Define PCAP sets
 DOS_PCAPS="$PCAP_DIR/mixed1.pcap $PCAP_DIR/normal1.pcap"
-# Adjust ARP PCAPS based on availability
-if [ -f "$PCAP_DIR/attack.pcap" ]; then
-    ARP_PCAPS="$PCAP_DIR/attack.pcap $PCAP_DIR/normal1.pcap"
-else
-    # Fallback or assume mixed1 might be used? User said "attack.pcap" for ARP.
-    # If not found, warn but don't crash yet, let the tool crash if needed.
-    ARP_PCAPS="$PCAP_DIR/attack.pcap $PCAP_DIR/normal1.pcap"
-fi
+ARP_PCAPS="$PCAP_DIR/attack.pcap $PCAP_DIR/normal1.pcap"
 
 # Python path helper
 export PYTHONPATH=$PYTHONPATH
@@ -38,7 +25,6 @@ echo "Starting 50MB-limited preprocessing for all projects..."
 # --- DOSDET Experts ---
 # dosdet (CNN)
 echo "[dosdet] Preprocessing..."
-ls -l "$PCAP_DIR"/*.pcap
 cd $DATA_ROOT/dosdet
 python3 scripts/preprocess_50mb.py "$PCAP_DIR/*.pcap" --labels labels/labels.csv
 
