@@ -242,13 +242,20 @@ def preprocess(cfg: dict, pcaps_glob, labels_csv: str):
         # end file loop
 
     # Flush any trailing rows
+    # Flush any trailing rows
     if buf["file"]:
+        print(f"[DEBUG] Flushing final batch. Rows: {len(buf['file'])}")
         _flush_shard()
+    
+    print(f"[DEBUG] End of processing. use_pyarrow={use_pyarrow}, use_csv={use_csv}, bytes={bytes_written_in_shard}, writer={shard_writer is not None}")
+    
     # Close last shard
     if shard_writer and hasattr(shard_writer, "close"):
+        print(f"[DEBUG] Closing shard_writer: {shard_path}")
         shard_writer.close()
         manifest["files"].append({"path": shard_path})
     elif not use_pyarrow and bytes_written_in_shard > 0:
+         print(f"[DEBUG] Appending fastparquet/csv shard: {shard_path}")
          # fastparquet/csv case: file is already written, just need to record it
          manifest["files"].append({"path": shard_path})
 
