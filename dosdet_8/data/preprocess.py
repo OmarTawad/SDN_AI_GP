@@ -117,6 +117,8 @@ def preprocess(cfg: dict, pcaps_glob, labels_csv: str):
             
         limit = int(cfg.get("preprocess", {}).get("limit", 0))
         total_windows = 0
+        if 'bytes_written_in_shard' not in locals():
+            bytes_written_in_shard = 0
         
         pbar = tqdm(windows, desc=f"Windows: {base}", unit="win", leave=False)
         for (t0, t1, win_rows, bins) in pbar:
