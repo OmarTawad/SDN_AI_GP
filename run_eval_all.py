@@ -52,6 +52,7 @@ def run_dosdet_style(proj_dir, script_name):
     env["OMP_NUM_THREADS"] = "1"
     env["MKL_NUM_THREADS"] = "1"
     env["OPENBLAS_NUM_THREADS"] = "1"
+    env["TORCH_NUM_INTEROP_THREADS"] = "1"
     
     cmd = ["python3", script_name, "--config", temp_config_name]
     print(f"[{proj_dir.name}] Running: {' '.join(cmd)}")
