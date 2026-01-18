@@ -10,10 +10,22 @@ import os
 from pathlib import Path
 from typing import Dict, List, Tuple
 
+os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
+
 import numpy as np
 import torch
 import yaml
-from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, f1_score, precision_score, recall_score, roc_auc_score
+from sklearn.metrics import (
+    accuracy_score,
+    average_precision_score,
+    classification_report,
+    confusion_matrix,
+    f1_score,
+    precision_recall_curve,
+    precision_score,
+    recall_score,
+    roc_auc_score,
+)
 from torch.utils.data import DataLoader
 
 from features.feature_slimming import StaticSlimmer
@@ -165,6 +177,18 @@ def _evaluate(
         metrics["roc_auc"] = None if math.isnan(roc) else roc
     except ValueError:
         metrics["roc_auc"] = None
+    try:
+        pr = float(average_precision_score(y_true, y_prob))
+        metrics["pr_auc"] = None if math.isnan(pr) else pr
+    except ValueError:
+        metrics["pr_auc"] = None
+
+    p, r, thr = precision_recall_curve(y_true, y_prob)
+    f1 = 2 * p * r / (p + r + 1e-9)
+    best_idx = int(np.nanargmax(f1)) if len(f1) else 0
+    best_tau = thr[max(0, best_idx - 1)] if len(thr) else threshold
+    metrics["best_f1"] = float(np.nanmax(f1)) if len(f1) else None
+    metrics["best_f1_threshold"] = float(best_tau)
 
     cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
     report = classification_report(y_true, y_pred, labels=[0, 1], target_names=["normal", "attack"], zero_division=0)
@@ -185,8 +209,8 @@ def main():
     eval_dir = _resolve_path(args.eval_dir)
     os.makedirs(eval_dir, exist_ok=True)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    amp_enabled = bool(cfg.get("training", {}).get("amp", False) and device.type == "cuda")
+    device = torch.device("cpu")
+    amp_enabled = False
 
     loader = _build_loader(cfg, batch_size=args.batch_size)
     model, scaler, slimmer, calib = _load_artifacts(artifacts_dir, cfg, device, amp_enabled)

@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import os
 
-
 os.environ.setdefault("TORCH_CPP_LOG_LEVEL", "ERROR")
+os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
 
 import argparse
 import glob
@@ -395,8 +395,8 @@ def main():
     with open(args.config, "r", encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    amp_enabled = bool(cfg.get("training", {}).get("amp", False) and device.type == "cuda")
+    device = torch.device("cpu")
+    amp_enabled = False
 
     save_dir = cfg["paths"]["artifacts_dir"]
     model, scaler, slimmer, meta, calib = _load_artifacts(save_dir, cfg, device, amp_enabled)
