@@ -1,5 +1,4 @@
 import argparse
-import sys
 import yaml
 from data.preprocess import preprocess
 
@@ -11,11 +10,10 @@ def main():
     
     cfg = yaml.safe_load(open(args.config))
     
-    # Enforce 50MB limit
-    print(f"[INFO] Enforcing 50MB limit per file via configuration override.")
-    # cfg["preprocess"]["byte_limit"] = int(50.0 * 1024 * 1024)
-    cfg["preprocess"]["byte_limit"] = None
-    cfg["preprocess"]["limit"] = 0 
+    # Enforce 50MB limit per file
+    print("[INFO] Enforcing 50MB limit per file via configuration override.")
+    cfg["preprocess"]["byte_limit"] = int(50.0 * 1024 * 1024)
+    cfg["preprocess"]["limit"] = 0
 
     # arpdet doesn't need labels csv argument in standard path? 
     # Checking existing code: preprocess(cfg, pcaps_glob, labels_csv)
