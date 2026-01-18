@@ -67,3 +67,10 @@ reports/**
 *.csv
 
 >>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
+
+# virtualenvs
+ryu_env/
+venv/
+.env/
+__pycache__/
+*.pyc
