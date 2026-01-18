@@ -1,0 +1,10 @@
+file,attack_label,attack_start_iso,family
+/home/omar/SDN_IoT_Simulated/ARP_LSTM/pcaps/normal1.pcap,0,,
+/home/omar/SDN_IoT_Simulated/ARP_LSTM/pcaps/normal2.pcap,0,,
+/home/omar/SDN_IoT_Simulated/ARP_LSTM/pcaps/attack.pcap,1,2014-01-07T02:56:26Z,arp_spoof
+
+/home/omar/SDN_IoT_Simulated/ARP_LSTM/pcaps/pure_attack.pcap,1,2014-01-07T02:56:26Z,arp_spoof
+/home/omar/SDN_IoT_Simulated/ARP_LSTM/pcaps/pure_attack2.pcap,1,2015-10-06T13:28:18Z,arp_spoof
+
+/home/omar/SDN_IoT_Simulated/ARP_LSTM/pcaps/synthetic_arp_spoof_extended.pcap,1,2025-09-22T16:30:01Z,arp_spoof
+/home/omar/SDN_IoT_Simulated/ARP_LSTM/pcaps/synthetic_arp_spoof.pcap,1,2025-09-22T15:12:55Z,arp_spoof

@@ -1,0 +1,22 @@
+{
+  "seq_in_dim": 14,
+  "static_dim": 40,
+  "micro_bins": 8,
+  "top_k_udp_ports": [
+    1900,
+    53,
+    123,
+    80,
+    443
+  ],
+  "channels": [
+    64,
+    96
+  ],
+  "kernel_size": 5,
+  "dropout": 0.1,
+  "mlp_hidden": [
+    256,
+    64
+  ]
+}

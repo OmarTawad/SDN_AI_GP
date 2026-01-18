@@ -1,0 +1,17 @@
+# Default configuration for the dynamic Mininet + Ryu + MoE runtime.
+
+runtime:
+  root_dir: dynamic_moe_runtime
+  alerts_file: alerts.jsonl
+  flows_file: flows.csv
+  packets_meta_file: packets_meta.csv
+  decisions_log: moe_decisions.log
+  attack_pcap: alerts_only.pcap
+
+controller:
+  ip: 127.0.0.1
+  port: 6633
+  mitigation: alert  # options: alert, drop
+
+pcap:
+  default_replay_host: h_smartthings

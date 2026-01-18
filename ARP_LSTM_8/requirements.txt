@@ -1,0 +1,11 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+numpy<2
+pandas
+pyarrow
+fastparquet
+scikit-learn
+tqdm
+matplotlib
+PyYAML
+scapy
+torch>=1.13.0

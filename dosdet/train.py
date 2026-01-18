@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+<<<<<<< HEAD
+=======
+import importlib.util
+>>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
 import os
 
 # Constrain BLAS / Torch threads for 2 vCPU boxes before heavy imports
@@ -40,6 +44,7 @@ except AttributeError:
     pass
 
 
+<<<<<<< HEAD
 def _read_parquet(path: str, columns: List[str]) -> pd.DataFrame:
     """Helper that favours single-threaded parquet reads for small VMs."""
     kwargs = {"columns": columns, "engine": "pyarrow"}
@@ -47,6 +52,56 @@ def _read_parquet(path: str, columns: List[str]) -> pd.DataFrame:
         return pd.read_parquet(path, use_threads=False, **kwargs)
     except TypeError:
         return pd.read_parquet(path, **kwargs)
+=======
+def _read_parquet(path: str, columns: List[str] | None = None) -> pd.DataFrame:
+    """
+    Helper that favours engines compatible with low-feature CPUs.
+    Defaults to fastparquet when available and falls back to pyarrow.
+    """
+    if str(path).endswith(".csv"):
+         try:
+             # Just read with pandas, JSON parsing happens in Dataset if needed
+             return pd.read_csv(path, usecols=columns if columns else None)
+         except Exception as e:
+             raise RuntimeError(f"Failed to read CSV shard {path}: {e}")
+
+    override = os.environ.get("DOSDET_PARQUET_ENGINE", "").strip().lower()
+    candidates = [override] if override else []
+    candidates.extend(["fastparquet", "pyarrow"])
+    tried = []
+    cols_kw = {"columns": columns} if columns is not None else {}
+    last_exc: Exception | None = None
+
+    for engine in candidates:
+        if not engine or engine in tried:
+            continue
+        tried.append(engine)
+        if engine == "fastparquet":
+            if importlib.util.find_spec("fastparquet") is None:
+                continue
+            try:
+                return pd.read_parquet(path, engine="fastparquet", **cols_kw)
+            except Exception as exc:  # pragma: no cover - fallback path
+                last_exc = exc
+                continue
+        elif engine == "pyarrow":
+            if importlib.util.find_spec("pyarrow") is None:
+                continue
+            kwargs = {"engine": "pyarrow", **cols_kw}
+            try:
+                return pd.read_parquet(path, use_threads=False, **kwargs)
+            except TypeError as exc:
+                if "use_threads" not in str(exc):
+                    last_exc = exc
+                    continue
+                return pd.read_parquet(path, **kwargs)
+            except Exception as exc:  # pragma: no cover - fallback path
+                last_exc = exc
+                continue
+
+    tried_str = ", ".join(tried) or "fastparquet, pyarrow"
+    raise RuntimeError(f"Unable to read parquet file {path} with engines: {tried_str}") from last_exc
+>>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
 
 
 class CachedDataset(Dataset):
@@ -97,8 +152,38 @@ class CachedDataset(Dataset):
         row = self.df.iloc[idx]
         M = int(row["M"])
         K_seq = int(row["K_seq"])
+<<<<<<< HEAD
         seq = np.array(row["seq"], dtype=np.float32).reshape(M, K_seq)
         static = np.array(row["static"], dtype=np.float32)
+=======
+
+        def _to_float_array(val):
+            if isinstance(val, (str, bytes)):
+                try:
+                    return np.array(json.loads(val), dtype=np.float32)
+                except Exception:
+                    pass
+            return np.array(val, dtype=np.float32)
+
+        seq_raw = row["seq"]
+        if isinstance(seq_raw, (bytes, bytearray, memoryview)):
+             # Parquet native blob
+             seq = np.frombuffer(seq_raw, dtype=np.float32).reshape(M, K_seq)
+        elif isinstance(seq_raw, str):
+             # CSV JSON string
+             seq = _to_float_array(seq_raw).reshape(M, K_seq)
+        else:
+             # Parquet native array/list
+             seq = np.array(seq_raw, dtype=np.float32).reshape(M, K_seq)
+        
+        static_raw = row["static"]
+        if isinstance(static_raw, (bytes, bytearray, memoryview)):
+             static = np.frombuffer(static_raw, dtype=np.float32)
+        elif isinstance(static_raw, str):
+             static = _to_float_array(static_raw)
+        else:
+             static = np.array(static_raw, dtype=np.float32)
+>>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
         y = np.array([float(row["y"])], dtype=np.float32)
         fam = np.array([int(row["fam"])], dtype=np.int64)
         t0 = np.array([float(row["t0"])], dtype=np.float64)
@@ -219,6 +304,10 @@ def collate(batch):
     seq = torch.stack([b[0] for b in batch], dim=0)
     static = torch.stack([b[1] for b in batch], dim=0)
     y = torch.stack([b[2] for b in batch], dim=0)
+<<<<<<< HEAD
+=======
+    # Family labels are still emitted by cached shards for backwards compatibility.
+>>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
     fam = torch.stack([b[3] for b in batch], dim=0).squeeze(1)
     ts = torch.stack([b[4] for b in batch], dim=0)
     names = [b[5] for b in batch]
@@ -268,8 +357,11 @@ def main() -> None:
         k=tr_cfg["kernel_size"],
         drop=tr_cfg["dropout"],
         mlp_hidden=tuple(tr_cfg["mlp_hidden"]),
+<<<<<<< HEAD
         aux_family_head=bool(tr_cfg.get("aux_family_head", False)),
         n_families=6,
+=======
+>>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
     )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
@@ -277,7 +369,10 @@ def main() -> None:
     criterion = nn.BCEWithLogitsLoss(
         pos_weight=torch.tensor([tr_cfg["class_weight_pos"]], device=device)
     )
+<<<<<<< HEAD
     aux_ce = nn.CrossEntropyLoss(ignore_index=-1)
+=======
+>>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=tr_cfg["lr"], weight_decay=tr_cfg["weight_decay"]
     )
@@ -320,7 +415,11 @@ def main() -> None:
             tqdm(train_loader, desc=f"Epoch {epoch:02d}", unit="batch"),
             start=1,
         ):
+<<<<<<< HEAD
             seq, static, y, fam, ts, names = batch
+=======
+            seq, static, y, _, ts, names = batch
+>>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
             stat_np = static.cpu().numpy()
             stat_scaled = scaler.transform(stat_np, feature_names)
             stat_slim = slimmer.transform(stat_scaled)
@@ -328,14 +427,20 @@ def main() -> None:
 
             seq = seq.to(device, non_blocking=True)
             y = y.to(device)
+<<<<<<< HEAD
             fam = fam.to(device)
+=======
+>>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
 
             cast_ctx = torch.amp.autocast("cuda") if amp_enabled else nullcontext()
             with cast_ctx:
                 out = model(seq, static_t)
                 loss = criterion(out["logits"], y)
+<<<<<<< HEAD
                 if tr_cfg.get("aux_family_head", False) and "family_logits" in out:
                     loss = loss + 0.2 * aux_ce(out["family_logits"], fam)
+=======
+>>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
 
             scaler_amp.scale(loss / accum_steps).backward()
             if step % accum_steps == 0 or step == len(train_loader):
@@ -351,7 +456,11 @@ def main() -> None:
         val_logits, val_targets = [], []
         with torch.no_grad():
             for batch in tqdm(val_thin_loader, desc="Thin-val", unit="batch", leave=False):
+<<<<<<< HEAD
                 seq, static, y, fam, ts, names = batch
+=======
+                seq, static, y, _, ts, names = batch
+>>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
                 stat_np = static.cpu().numpy()
                 stat_scaled = scaler.transform(stat_np, feature_names)
                 stat_slim = slimmer.transform(stat_scaled)
@@ -414,7 +523,11 @@ def main() -> None:
     full_logits, full_targets = [], []
     with torch.no_grad():
         for batch in tqdm(val_full_loader, desc="Full-val (calibration)", unit="batch"):
+<<<<<<< HEAD
             seq, static, y, fam, ts, names = batch
+=======
+            seq, static, y, _, ts, names = batch
+>>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
             stat_np = static.cpu().numpy()
             stat_scaled = scaler.transform(stat_np, feature_names)
             stat_slim = slimmer.transform(stat_scaled)
@@ -453,8 +566,11 @@ def main() -> None:
         "kernel_size": tr_cfg["kernel_size"],
         "dropout": tr_cfg["dropout"],
         "mlp_hidden": list(tr_cfg["mlp_hidden"]),
+<<<<<<< HEAD
         "aux_family_head": bool(tr_cfg.get("aux_family_head", False)),
         "n_families": 6,
+=======
+>>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
     }
     with open(os.path.join(artifacts_dir, "feature_model_meta.json"), "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=2)

@@ -1,0 +1,11 @@
+numpy
+pandas
+fastparquet
+pyarrow
+scikit-learn
+tqdm
+matplotlib
+PyYAML
+scapy
+torch==2.0.1
+pytest

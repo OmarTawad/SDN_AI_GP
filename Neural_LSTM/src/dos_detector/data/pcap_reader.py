@@ -9,6 +9,13 @@ import shutil, subprocess
 from scapy.all import ICMP, IP, IPv6, RawPcapReader, TCP, UDP, Ether
 from ..utils.progress import progress
 from .structures import PacketRecord
+<<<<<<< HEAD
+=======
+from ..features.ssdp_parser import parse_ssdp_payload
+
+SSDP_MULTICAST_V4 = "239.255.255.250"
+SSDP_MULTICAST_V6 = "ff02::c"
+>>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
 
 @dataclass
 class PCAPMetadata:
@@ -50,7 +57,16 @@ def _decode_packet(data: bytes, timestamp: float) -> Optional[PacketRecord]:
     src_port = dst_port = None
     tcp_flags = None
     payload_len = 0
+<<<<<<< HEAD
     info: dict[str, Optional[str]] = {}
+=======
+    info: dict[str, Optional[str]] = {
+        "ssdp_method": "NONE",
+        "ssdp_st": None,
+        "ssdp_man": None,
+        "ssdp_user_agent": None,
+    }
+>>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
 
     if ip_layer is not None:
         src_ip = getattr(ip_layer, "src", None)
@@ -68,6 +84,7 @@ def _decode_packet(data: bytes, timestamp: float) -> Optional[PacketRecord]:
             protocol = "udp"
             payload = bytes(udp.payload)
             payload_len = len(payload)
+<<<<<<< HEAD
             if payload_len:
                 try:
                     text = payload.decode(errors="ignore")
@@ -75,6 +92,22 @@ def _decode_packet(data: bytes, timestamp: float) -> Optional[PacketRecord]:
                     elif "NOTIFY" in text: info["ssdp_method"] = "NOTIFY"
                 except Exception:
                     pass
+=======
+            is_ssdp_candidate = (
+                dst_port == 1900
+                or src_port == 1900
+                or (dst_ip == SSDP_MULTICAST_V4)
+                or (dst_ip == SSDP_MULTICAST_V6)
+                or (src_ip == SSDP_MULTICAST_V4)
+                or (src_ip == SSDP_MULTICAST_V6)
+            )
+            if payload_len and is_ssdp_candidate:
+                method, tokens = parse_ssdp_payload(payload)
+                info["ssdp_method"] = method
+                info["ssdp_st"] = tokens.get("ST")
+                info["ssdp_man"] = tokens.get("MAN")
+                info["ssdp_user_agent"] = tokens.get("USER-AGENT")
+>>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
         elif ip_layer.haslayer(ICMP):
             icmp = ip_layer.getlayer(ICMP)
             protocol = "icmp"
@@ -109,7 +142,11 @@ def _capinfos_count(path: Path) -> Optional[int]:
             return int(digits) if digits else None
     return None
 
+<<<<<<< HEAD
 def read_pcap(path: Path, limit: Optional[int] = None) -> List[PacketRecord]:
+=======
+def read_pcap(path: Path, limit: Optional[int] = None, byte_limit: Optional[int] = None) -> List[PacketRecord]:
+>>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
     packets: List[PacketRecord] = []
     reader = RawPcapReader(str(path))
     try:
@@ -117,9 +154,22 @@ def read_pcap(path: Path, limit: Optional[int] = None) -> List[PacketRecord]:
         it = enumerate(reader)
         if total:
             it = progress(it, total=total, desc=f"Reading {path.name}", unit="pkt", leave=False)
+<<<<<<< HEAD
         for index, (data, meta) in it:
             if limit is not None and index >= limit:
                 break
+=======
+        
+        accumulated_bytes = 0
+        for index, (data, meta) in it:
+            if limit is not None and index >= limit:
+                break
+            
+            if byte_limit is not None:
+                accumulated_bytes += len(data)
+                if accumulated_bytes > byte_limit:
+                    break
+>>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
             ts = _timestamp_from_meta(meta)
             rec = _decode_packet(data, ts)
             if rec is not None:

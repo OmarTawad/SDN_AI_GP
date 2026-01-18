@@ -1,6 +1,35 @@
+<<<<<<< HEAD
 *.venv
+=======
+# ---- big generated artifacts ----
+**/cache/
+**/cache/**
+**/venv/**
+
+# reports / exports (often huge)
+**/reports/
+**/reports/**
+**/reports_home/
+**/reports_home/**
+
+# pcaps / datasets / samples
+>>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
 *.pcap
+*.pcapng
+**/samples/
+**/samples/**
+**/samples_real_backup/**
+
+# model checkpoints
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.h5
+
+# python junk
 __pycache__/
+<<<<<<< HEAD
 *.py[cod]
 *ryu_env
 *reports/
@@ -15,3 +44,26 @@ reports/**
 !data/processed/.gitkeep
 *processed
 *release
+=======
+*.pyc
+*.venv/
+*venv/
+
+# processed datasets / generated windows/hosts files
+**/data/processed/**
+**/data/processed/**
+
+# evaluation outputs
+**/eval/**
+**/eval/**
+
+# fp16/int8 output folders if they contain generated artifacts
+**/reports_fp16/**
+**/reports_fp16/**
+**/reports_int8/**
+**/reports_int8/**
+
+
+*.csv
+
+>>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7

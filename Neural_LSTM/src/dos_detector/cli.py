@@ -45,6 +45,11 @@ def _resolve_pcaps(pattern: str) -> list[Path]:
 def extract_features(
     pcaps: str = typer.Argument(..., help="Glob pattern for PCAP files"),
     out: Optional[Path] = typer.Option(None, help="Output directory for processed features"),
+<<<<<<< HEAD
+=======
+    limit: int = typer.Option(0, help="Limit number of windows to process per file"),
+    limit_mb: float = typer.Option(0.0, help="Limit processing to N megabytes per file"),
+>>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
     config_path: Path = typer.Option(Path("configs/config.yaml"), help="Path to configuration file"),
 ) -> None:
     """Extract features from PCAP files and persist them to Parquet."""
@@ -54,7 +59,12 @@ def extract_features(
     target_dir = out or config.paths.processed_dir
     ensure_dir(target_dir)
     paths = _resolve_pcaps(pcaps)
+<<<<<<< HEAD
     pipeline.process_files(paths, target_dir)
+=======
+    paths = _resolve_pcaps(pcaps)
+    pipeline.process_files(paths, target_dir, limit=limit, limit_mb=limit_mb)
+>>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
     typer.echo(f"Processed {len(paths)} PCAPs → {target_dir}")
 
 

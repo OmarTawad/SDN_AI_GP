@@ -1,0 +1,100 @@
+{
+  "dosdet": {
+    "eval_dirs": [],
+    "metrics": {
+      "accuracy": null,
+      "precision": null,
+      "recall": null,
+      "f1": null,
+      "roc_auc": null
+    },
+    "confusion_matrix": null,
+    "sources": [],
+    "notes": [
+      "No evaluation directories containing required artifacts were found.",
+      "No accuracy/precision/recall/F1/ROC-AUC metrics extracted."
+    ]
+  },
+  "Neural_LSTM": {
+    "eval_dirs": [
+      "Neural_LSTM/src/dos_detector/evaluation"
+    ],
+    "metrics": {
+      "accuracy": null,
+      "precision": null,
+      "recall": null,
+      "f1": null,
+      "roc_auc": null
+    },
+    "confusion_matrix": null,
+    "sources": [],
+    "notes": [
+      "No accuracy/precision/recall/F1/ROC-AUC metrics extracted."
+    ]
+  },
+  "arpdet": {
+    "eval_dirs": [],
+    "metrics": {
+      "accuracy": null,
+      "precision": null,
+      "recall": null,
+      "f1": null,
+      "roc_auc": null
+    },
+    "confusion_matrix": null,
+    "sources": [],
+    "notes": [
+      "No evaluation directories containing required artifacts were found.",
+      "No accuracy/precision/recall/F1/ROC-AUC metrics extracted."
+    ]
+  },
+  "arp_lstm": {
+    "eval_dirs": [
+      "ARP_LSTM/src/arp_detector/evaluation"
+    ],
+    "metrics": {
+      "accuracy": null,
+      "precision": null,
+      "recall": null,
+      "f1": null,
+      "roc_auc": null
+    },
+    "confusion_matrix": null,
+    "sources": [],
+    "notes": [
+      "No accuracy/precision/recall/F1/ROC-AUC metrics extracted."
+    ]
+  },
+  "autoencoder": {
+    "eval_dirs": [],
+    "metrics": {
+      "accuracy": null,
+      "precision": null,
+      "recall": null,
+      "f1": null,
+      "roc_auc": null
+    },
+    "confusion_matrix": null,
+    "sources": [],
+    "notes": [
+      "No evaluation directories containing required artifacts were found.",
+      "No accuracy/precision/recall/F1/ROC-AUC metrics extracted."
+    ]
+  },
+  "moe_combined": {
+    "eval_dirs": [],
+    "metrics": {
+      "accuracy": null,
+      "precision": null,
+      "recall": null,
+      "f1": null,
+      "roc_auc": null
+    },
+    "confusion_matrix": null,
+    "sources": [],
+    "notes": [
+      "No evaluation directories containing required artifacts were found.",
+      "No accuracy/precision/recall/F1/ROC-AUC metrics extracted."
+    ]
+  }
+}

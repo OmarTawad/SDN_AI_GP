@@ -31,8 +31,17 @@ def approximate_sequence_shap(
 
     def _forward(x: torch.Tensor) -> torch.Tensor:
         output = model(x)
+<<<<<<< HEAD
         logits = getattr(output, "file_logits", output)
         return torch.sigmoid(logits)
+=======
+        if hasattr(output, "sequence_prob"):
+            return output.sequence_prob
+        window_probs = torch.sigmoid(getattr(output, "window_logits", output))
+        if window_probs.ndim > 1:
+            window_probs = window_probs.mean(dim=1)
+        return window_probs
+>>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
 
     if shap is not None:
         try:
@@ -52,4 +61,8 @@ def approximate_sequence_shap(
     }
 
 
+<<<<<<< HEAD
 __all__ = ["approximate_sequence_shap"]
+=======
+__all__ = ["approximate_sequence_shap"]
+>>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7

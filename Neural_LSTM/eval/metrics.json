@@ -1,0 +1,16 @@
+{
+  "accuracy": 0.9862411631319195,
+  "precision": 0.8569254185692542,
+  "recall": 0.4867435158501441,
+  "f1": 0.6208417570299577,
+  "threshold": 0.5,
+  "num_windows": 149940,
+  "num_sequences": 4998,
+  "positives": 3470,
+  "roc_auc": 0.9938813261324279,
+  "split": "test",
+  "checkpoint": "/home/roots/SDN_AI_GP/Neural_LSTM/models/supervised.pt",
+  "elapsed_seconds": 39.89692282676697,
+  "cpu_percent": 120.4,
+  "memory_gb": 0.6647529602050781
+}

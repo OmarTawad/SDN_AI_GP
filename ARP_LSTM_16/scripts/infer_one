@@ -1,0 +1,294 @@
+#!/usr/bin/env python3
+"""
+Standalone inference for one PCAP.
+
+Usage:
+  python infer_one.py /path/to/file.pcap [--config-path configs/config.yaml]
+                      [--no-extract] [--topk-pct 0.5] [--min-run 3]
+                      [--tau-file 0.75] [--tau-window 0.65]
+
+Defaults read from your config; CLI flags can temporarily override.
+"""
+from __future__ import annotations
+import argparse, json, os, subprocess, sys
+from pathlib import Path
+from collections import Counter
+
+# Ensure we import the project package even when running directly from scripts/
+ROOT = Path(__file__).resolve().parents[1]
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
+
+import joblib
+import numpy as np
+import pandas as pd
+import torch
+
+from arp_detector.config import load_config
+
+# --- tiny helpers ----------------------------------------------------------------
+def topk_mean(x: np.ndarray, pct: float) -> float:
+    if x.size == 0:
+        return 0.0
+    k = max(1, int(np.ceil(len(x) * (pct / 100.0))))
+    return float(np.mean(np.partition(x, -k)[-k:]))
+
+def find_runs(mask: np.ndarray, min_len: int) -> list[tuple[int,int]]:
+    runs = []
+    i, n = 0, len(mask)
+    while i < n:
+        if mask[i]:
+            j = i
+            while j + 1 < n and mask[j+1]:
+                j += 1
+            if (j - i + 1) >= min_len:
+                runs.append((i, j))
+            i = j + 1
+        else:
+            i += 1
+    return runs
+
+
+def tail_threshold(x: np.ndarray, quantile: float) -> float:
+    """Return the minimum value among the top (1-quantile) fraction of x."""
+    if x.size == 0:
+        return 0.0
+    if quantile <= 0.0 or quantile >= 1.0:
+        return float(x.max())
+    tail_count = max(1, int(np.ceil(len(x) * (1.0 - quantile))))
+    return float(np.partition(x, -tail_count)[-tail_count])
+
+
+def infer_feature_columns(frame: pd.DataFrame) -> list[str]:
+    """Best-effort fallback if manifest lacks feature column metadata."""
+    meta_cols = {
+        "pcap",
+        "window_index",
+        "window_start",
+        "window_end",
+        "family_index",
+        "family",
+        "attack",
+    }
+    return [col for col in frame.columns if col not in meta_cols]
+
+
+def load_host_maps(processed_dir: Path, stem: str) -> dict[str, dict[int, dict[str, int]]]:
+    """Load cached per-window MAC/IP counts if available."""
+
+    path = processed_dir / f"{stem}_hosts.json"
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        print(f"[warn] failed to read host metadata {path}: {exc}", file=sys.stderr)
+        return {}
+
+    def _convert(bucket: dict[str, dict[str, int]]) -> dict[int, dict[str, int]]:
+        converted: dict[int, dict[str, int]] = {}
+        for idx, counts in (bucket or {}).items():
+            try:
+                idx_int = int(idx)
+            except (TypeError, ValueError):
+                continue
+            converted[idx_int] = {str(k): int(v) for k, v in counts.items()}
+        return converted
+
+    return {
+        "macs": _convert(data.get("macs", {})),
+        "ips": _convert(data.get("ips", {})),
+    }
+
+
+def summarize_hosts(
+    host_maps: dict[str, dict[int, dict[str, int]]],
+    scores: np.ndarray,
+    tau_win: float,
+    top_n: int = 5,
+) -> dict[str, list[tuple[str, int, int]]]:
+    """Aggregate host activity and return the top contributors."""
+
+    if not scores.size or not host_maps:
+        return {}
+
+    mac_map = host_maps.get("macs", {})
+    ip_map = host_maps.get("ips", {})
+    if not mac_map and not ip_map:
+        return {}
+
+    attack_indices = {idx for idx, score in enumerate(scores) if float(score) >= tau_win}
+
+    mac_totals: Counter[str] = Counter()
+    mac_attack: Counter[str] = Counter()
+    for idx, counts in mac_map.items():
+        mac_totals.update(counts)
+        if idx in attack_indices:
+            mac_attack.update(counts)
+
+    ip_totals: Counter[str] = Counter()
+    ip_attack: Counter[str] = Counter()
+    for idx, counts in ip_map.items():
+        ip_totals.update(counts)
+        if idx in attack_indices:
+            ip_attack.update(counts)
+
+    def _top(counter_all: Counter[str], counter_attack: Counter[str]) -> list[tuple[str, int, int]]:
+        entries = [
+            (key, int(total), int(counter_attack.get(key, 0)))
+            for key, total in counter_all.items()
+        ]
+        entries.sort(key=lambda item: (item[2], item[1]), reverse=True)
+        return entries[:top_n]
+
+    return {
+        "macs": _top(mac_totals, mac_attack),
+        "ips": _top(ip_totals, ip_attack),
+    }
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("pcap", type=Path, help="PCAP or PCAPNG file")
+    ap.add_argument("--config-path", default="configs/config.yaml")
+    ap.add_argument("--no-extract", action="store_true", help="Use cached parquet if present")
+    ap.add_argument("--topk-pct", type=float, default=None, help="Percent of top window scores to average for file score (e.g. 0.5)")
+    ap.add_argument("--min-run", type=int, default=None, help="Min consecutive windows for an interval")
+    ap.add_argument("--tau-file", type=float, default=None, help="Override file threshold")
+    ap.add_argument("--tau-window", type=float, default=None, help="Override window threshold")
+    ap.add_argument(
+        "--min-support-quantile",
+        type=float,
+        default=0.999,
+        help="Quantile (0-1) required to exceed tau_file; set <=0 to disable",
+    )
+    args = ap.parse_args()
+
+    config_path = Path(args.config_path).expanduser().resolve()
+    cfg = load_config(config_path)
+
+    # paths from config
+    processed_dir = cfg.paths.processed_dir
+    reports_dir = cfg.paths.reports_dir
+    reports_dir.mkdir(parents=True, exist_ok=True)
+
+    manifest_path = cfg.paths.manifest_path
+    manifest = json.loads(manifest_path.read_text())
+    feature_cols = manifest.get("feature_columns") or []
+
+    # thresholds / windowing
+    seq_len   = int(cfg.windowing.sequence_length)
+    stride    = int(cfg.windowing.sequence_stride)
+    tau_file  = float(args.tau_file if args.tau_file is not None else cfg.postprocessing.tau_file)
+    tau_win   = float(args.tau_window if args.tau_window is not None else cfg.postprocessing.tau_window)
+    min_run   = int(args.min_run if args.min_run is not None else cfg.postprocessing.min_attack_windows)
+    min_support_q = float(args.min_support_quantile)
+    topk_pct  = float(args.topk_pct if args.topk_pct is not None else 0.5)  # default: mean of top 0.5% windows
+
+    # load scaler
+    scaler = joblib.load(cfg.paths.scaler_path)
+    torch.set_num_threads(int(os.environ.get("OMP_NUM_THREADS", "2")))
+
+    # ensure features exist
+    pq = processed_dir / f"{args.pcap.stem}.parquet"
+    need_extract = True
+    if pq.exists():
+        # reuse if parquet is newer or user asked to skip extraction
+        need_extract = not args.no_extract and (pq.stat().st_mtime < args.pcap.stat().st_mtime)
+
+    if need_extract:
+        cmd = [
+            "arp-detector", "extract-features", str(args.pcap),
+            "--out", str(processed_dir),
+            "--config-path", str(config_path),
+        ]
+        print("[extract] running:", " ".join(cmd), flush=True)
+        r = subprocess.run(cmd)
+        if r.returncode != 0:
+            print("!! feature extraction failed", file=sys.stderr)
+            sys.exit(r.returncode)
+    else:
+        print(f"[cache] using {pq.name}")
+
+    # load frame
+    df = pd.read_parquet(pq)
+    if not feature_cols:
+        feature_cols = infer_feature_columns(df)
+        if not feature_cols:
+            print("!! could not infer feature columns from manifest or parquet", file=sys.stderr)
+            sys.exit(3)
+    if not set(feature_cols).issubset(df.columns):
+        missing = sorted(set(feature_cols) - set(df.columns))
+        print(f"!! processed parquet missing features: {missing}", file=sys.stderr)
+        sys.exit(2)
+
+    X = df[feature_cols].to_numpy(dtype=np.float32)
+    X = scaler.transform(X).astype(np.float32)
+
+    # cheap import of your model class (after we know feature columns)
+    from arp_detector.models.supervised import SequenceClassifier
+    num_types = len(cfg.labels.family_mapping)
+    model = SequenceClassifier(input_size=len(feature_cols), num_attack_types=num_types, config=cfg.model.supervised)
+    state = torch.load(cfg.paths.supervised_model_path, map_location="cpu")
+    model.load_state_dict(state)
+    model.eval()
+
+    # build sequences
+    idxs = list(range(0, max(0, len(X) - seq_len + 1), stride))
+    if not idxs and len(X) >= seq_len:
+        idxs = [0]
+    seqs = np.stack([X[i:i+seq_len] for i in idxs]) if idxs else np.empty((0, seq_len, X.shape[1]), dtype=np.float32)
+
+    # score
+    scores = np.array([], dtype=np.float32)
+    with torch.no_grad():
+        bs = 512
+        for i in range(0, len(seqs), bs):
+            t = torch.from_numpy(seqs[i:i+bs])
+            out = model(t)
+            probs = torch.sigmoid(out.window_logits).numpy().reshape(-1)
+            scores = np.concatenate([scores, probs]) if scores.size else probs
+
+    # file decision (top-k mean is much less spiky than raw max)
+    file_score = topk_mean(scores, topk_pct) if scores.size else 0.0
+    support_score = tail_threshold(scores, min_support_q) if scores.size else 0.0
+    meets_support = (min_support_q <= 0.0) or (support_score >= tau_file)
+    is_attack = file_score >= tau_file and meets_support
+
+    # window intervals (optional diagnostics)
+    intervals = []
+    if scores.size and "window_start" in df.columns and "window_end" in df.columns:
+        win_mask = scores >= tau_win
+        for s, e in find_runs(win_mask, min_len=min_run):
+            t0 = float(df.iloc[s]["window_start"])
+            t1 = float(df.iloc[e]["window_end"])
+            intervals.append((t0, t1, float(scores[s:e+1].max())))
+
+    host_maps = load_host_maps(processed_dir, args.pcap.stem)
+    host_summary = summarize_hosts(host_maps, scores, tau_win)
+
+    # print result
+    label = "ATTACK" if is_attack else "normal"
+    extra = f", support_q={support_score:.6f}" if min_support_q > 0 else ""
+    print(f"\n{args.pcap.name}  score={file_score:.6f}  pred={label}  "
+          f"(tau_file={tau_file:.2f}, topk={topk_pct:.3f}%, q={min_support_q:.4f}{extra})")
+
+    # save intervals report next to other reports
+    out_csv = reports_dir / f"predicted_intervals_{args.pcap.stem}.csv"
+    if intervals:
+        pd.DataFrame(intervals, columns=["start_time","end_time","max_window_score"]).to_csv(out_csv, index=False)
+        print("[ok] intervals ->", out_csv)
+    else:
+        print("[info] no intervals over tau_window; nothing to write.")
+
+    if host_summary.get("macs"):
+        print("\nTop MAC senders (total | attack-window packets):")
+        for mac, total, attack in host_summary["macs"]:
+            print(f"  {mac:<17} total={total:5d} attack={attack:5d}")
+    if host_summary.get("ips"):
+        print("\nTop IP senders (total | attack-window packets):")
+        for ip, total, attack in host_summary["ips"]:
+            print(f"  {ip:<15} total={total:5d} attack={attack:5d}")
+
+if __name__ == "__main__":
+    main()

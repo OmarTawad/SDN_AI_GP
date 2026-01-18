@@ -1,0 +1,6 @@
+device: cpu
+num_workers: 2
+batch_size: auto
+precision: bfloat16
+checkpoint_interval: 5
+log_file: eval/log.txt

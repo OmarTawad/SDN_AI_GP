@@ -15,10 +15,14 @@ This project provides a production-ready pipeline for detecting anomalies in net
 python3 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
+<<<<<<< HEAD
 pip install -e .
 # Optional extras
 pip install -e .[tests]
 pip install -e .[plots]
+=======
+pip install -e ..[all]
+>>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
 ```
 
 ## Quickstart
@@ -75,6 +79,22 @@ The JSON report resembles:
 ```
 The paired CSV contains full per-window scores, thresholds, and anomaly flags.
 
+<<<<<<< HEAD
+=======
+### Offline Evaluation
+To compute accuracy/precision/recall/F1/ROC-AUC against a labelled Parquet split, run the standalone evaluator:
+
+```bash
+pip install duckdb  # needed for Parquet streaming on CPUs without AVX512 (included in the unified install)
+python evaluate_autoencoder.py \
+  --config config.yaml \
+  --windows data/windows/mixed_eval.parquet \
+  --label-column label
+```
+
+The script loads the trained artifacts, streams the Parquet data in batches (using DuckDB when available to avoid `Illegal instruction` crashes on some CPUs), writes metrics to `eval/metrics.json`, the confusion matrix to `eval/confusion_matrix.npy`, and a detailed log to `eval/log.txt`.
+
+>>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
 ## Data Flow
 1. **Extraction** – `extract_pcaps.py` streams packets, maintains overlapping windows (default 1s window, 0.5s stride), and writes feature rows to Parquet in bounded batches.
 2. **Training** – `train_autoencoder.py` loads Parquet data, applies clipping/scaling, trains the PyTorch denoising autoencoder with early stopping, and saves artifacts (`model.pt`, `scaler.pkl`, `feature_list.json`, `clip_bounds.json`, `threshold.json`).
