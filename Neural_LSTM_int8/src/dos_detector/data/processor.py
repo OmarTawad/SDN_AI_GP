@@ -28,7 +28,7 @@ class FeaturePipeline:
         limit_env = os.getenv("DOS_LIMIT_PKTS")
         pkt_limit = int(limit_env) if (limit_env and limit_env.isdigit()) else None
         
-        byte_limit = int(limit_mb * 1024 * 1024) if limit_mb > 0 else None
+        byte_limit = int(limit_mb * 1024 * 1024) if limit_mb is not None and limit_mb > 0 else None
 
         t0 = time.perf_counter()
         packets = read_pcap(pcap_path, limit=pkt_limit, byte_limit=byte_limit)
@@ -165,7 +165,8 @@ class FeaturePipeline:
                 print(f"[SKIP] {p.name}: {e}", flush=True)
                 continue
 
-        save_json(self.config.paths.manifest_path, {"feature_columns": feature_cols, "frames": frames_meta})
+        # Save manifest to the output directory, ensuring consistency
+        save_json(out_dir / "feature_manifest.json", {"feature_columns": feature_cols, "frames": frames_meta})
         return {"feature_columns": feature_cols, "frames": frames_meta}
 
     def _build_host_maps(self, windows: Iterable[Window]) -> Dict[str, Dict[int, Dict[str, int]]]:
