@@ -7,6 +7,7 @@ os.environ.setdefault("OMP_NUM_THREADS", "2")
 os.environ.setdefault("OPENBLAS_NUM_THREADS", "2")
 os.environ.setdefault("MKL_NUM_THREADS", "2")
 os.environ.setdefault("NUMEXPR_NUM_THREADS", "2")
+os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
 
 import argparse
 import json
@@ -16,7 +17,6 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
-from torch.cuda.amp import GradScaler
 from contextlib import nullcontext
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import DataLoader, Dataset
@@ -310,7 +310,7 @@ def main() -> None:
         drop=tr_cfg["dropout"],
         mlp_hidden=tuple(tr_cfg["mlp_hidden"]),
     )
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cpu")
     model.to(device)
 
     criterion = nn.BCEWithLogitsLoss(
@@ -324,15 +324,13 @@ def main() -> None:
         if tr_cfg.get("cosine_lr", False)
         else None
     )
-    amp_enabled = bool(tr_cfg.get("amp", False) and torch.cuda.is_available())
-    scaler_amp = GradScaler(enabled=amp_enabled)
     grad_clip = float(tr_cfg.get("grad_clip", 0.0) or 0.0)
     accum_steps = max(1, int(tr_cfg.get("grad_accum_steps", 1)))
 
     def make_loader(ds, shuffle: bool, workers: int):
         cpu_slots = max(1, os.cpu_count() or 1)
         worker_cap = min(workers, max(0, cpu_slots - 1))
-        pin_mem = bool(tr_cfg.get("pinned_memory", False) and torch.cuda.is_available())
+        pin_mem = False
         return DataLoader(
             ds,
             batch_size=tr_cfg["batch_size"],
@@ -367,18 +365,15 @@ def main() -> None:
             seq = seq.to(device, non_blocking=True)
             y = y.to(device)
 
-            cast_ctx = torch.amp.autocast("cuda") if amp_enabled else nullcontext()
-            with cast_ctx:
+            with nullcontext():
                 out = model(seq, static_t)
                 loss = criterion(out["logits"], y)
 
-            scaler_amp.scale(loss / accum_steps).backward()
+            (loss / accum_steps).backward()
             if step % accum_steps == 0 or step == len(train_loader):
                 if grad_clip > 0:
-                    scaler_amp.unscale_(optimizer)
                     nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
-                scaler_amp.step(optimizer)
-                scaler_amp.update()
+                optimizer.step()
                 optimizer.zero_grad(set_to_none=True)
             running_loss.append(loss.item())
 
@@ -392,8 +387,7 @@ def main() -> None:
                 stat_slim = slimmer.transform(stat_scaled)
                 static_t = torch.from_numpy(stat_slim).to(device).float()
                 seq = seq.to(device)
-                with (torch.amp.autocast("cuda") if amp_enabled else nullcontext()):
-                    logits = model(seq, static_t)["logits"]
+                logits = model(seq, static_t)["logits"]
                 val_logits.append(logits.cpu().numpy())
                 val_targets.append(y.cpu().numpy())
         val_logits_np = np.vstack(val_logits)
@@ -455,8 +449,7 @@ def main() -> None:
             stat_slim = slimmer.transform(stat_scaled)
             static_t = torch.from_numpy(stat_slim).to(device).float()
             seq = seq.to(device)
-            with (torch.amp.autocast("cuda") if amp_enabled else nullcontext()):
-                out = model(seq, static_t)
+            out = model(seq, static_t)
             full_logits.append(out["logits"].cpu())
             full_targets.append(y.cpu())
     full_logits_t = torch.cat(full_logits, dim=0)

@@ -16,6 +16,7 @@ os.environ.setdefault("OPENBLAS_NUM_THREADS", "2")
 os.environ.setdefault("MKL_NUM_THREADS", "2")
 os.environ.setdefault("NUMEXPR_NUM_THREADS", "2")
 os.environ.setdefault("TORCH_CPP_LOG_LEVEL", "ERROR")
+os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
 
 import numpy as np
 import torch
@@ -129,7 +130,7 @@ def main() -> None:
 
     save_dir = cfg["paths"]["artifacts_dir"]
     model, scaler, slimmer, meta, calib = _load_artifacts(save_dir, cfg)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cpu")
     model.to(device)
 
     T = float(calib.get("temperature", 1.0))

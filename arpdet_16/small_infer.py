@@ -17,6 +17,7 @@ os.environ.setdefault("OPENBLAS_NUM_THREADS", "2")
 os.environ.setdefault("MKL_NUM_THREADS", "2")
 os.environ.setdefault("NUMEXPR_NUM_THREADS", "2")
 os.environ.setdefault("TORCH_CPP_LOG_LEVEL", "ERROR")
+os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
 
 import numpy as np
 import torch
@@ -133,8 +134,8 @@ def main() -> None:
         raise FileNotFoundError(f"PCAP not found: {pcap_path}")
 
     save_dir = cfg["paths"]["artifacts_dir"]
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    use_amp = bool(cfg.get("training", {}).get("amp", False) and device.type == "cuda")
+    device = torch.device("cpu")
+    use_amp = False
     model, scaler, slimmer, meta, calib = _load_artifacts(save_dir, cfg, device, use_amp)
 
     T = float(calib.get("temperature", 1.0))

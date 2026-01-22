@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 from typing import Dict, List, Sequence
 
@@ -28,13 +29,39 @@ try:  # optional dependency for safer Parquet streaming on older CPUs
     import duckdb  # type: ignore
 except Exception:  # pragma: no cover
     duckdb = None
+try:  # resource is not available on Windows
+    import resource
+except Exception:  # pragma: no cover
+    resource = None
 
 DEFAULT_EVAL_DIR = ROOT / "eval"
 LABEL_CANDIDATES = ("label", "attack", "is_attack", "is_anomaly", "y", "target")
 MODEL_FILES = ("model.pt", "model_best.pt", "best_model.pt")
+SEQUENCE_CANDIDATES = ("sequence", "sequence_id", "seq_id", "flow_id", "flow", "session", "source", "file", "pcap")
+SPLIT_TOKENS = ("test", "eval", "mixed", "attack", "validation", "val", "train")
 
 
 def _resolve(path: str | Path) -> Path: return Path(path) if Path(path).is_absolute() else ROOT / Path(path)
+
+
+def _guess_split(paths: Sequence[Path], override: str | None) -> str:
+    if override:
+        return str(override)
+    for path in paths:
+        name = path.stem.lower()
+        for token in SPLIT_TOKENS:
+            if token in name:
+                return "val" if token == "validation" else token
+    return "unknown"
+
+
+def _memory_gb() -> float | None:
+    if resource is None:
+        return None
+    usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    if sys.platform == "darwin":
+        return float(usage) / (1024 ** 3)
+    return float(usage) / (1024 ** 2)
 
 
 def _prepare_features(df, feature_names: Sequence[str], log_features: Sequence[str], clip_bounds):
@@ -84,6 +111,7 @@ def _load_artifacts(config: Config, override: str | None, device_str: str):
     clip_bounds = json.loads(clip_path.read_text(encoding="utf-8")) if clip_path.exists() else {"lower": {}, "upper": {}}
     return {
         "dir": art_dir,
+        "model_path": model_path,
         "model": model,
         "device": device,
         "scaler": load_scaler(art_dir / "scaler.pkl"),
@@ -125,6 +153,9 @@ def _iter_windows(path: Path, rows_per_batch: int):
 
 def _evaluate_dataset(paths: Sequence[Path], artifacts, label_hint: str | None, rows_per_batch: int, batch_size: int, threshold_override: float | None):
     label_name = label_hint
+    sequence_col = None
+    sequence_values = set()
+    total_windows = 0
     y_true, scores = [], []
     for path in paths:
         for chunk in _iter_windows(path, rows_per_batch):
@@ -136,6 +167,11 @@ def _evaluate_dataset(paths: Sequence[Path], artifacts, label_hint: str | None, 
             mask = chunk[label_name].notna()
             if not mask.any(): continue
             subset = chunk.loc[mask].reset_index(drop=True); labels = subset[label_name].astype(int).to_numpy()
+            total_windows += len(labels)
+            if sequence_col is None:
+                sequence_col = next((col for col in SEQUENCE_CANDIDATES if col in subset.columns and col != label_name), None)
+            if sequence_col and sequence_col in subset.columns:
+                sequence_values.update(subset[sequence_col].dropna().unique().tolist())
             features = subset.drop(columns=[label_name], errors="ignore")
             matrix = _prepare_features(features, artifacts["feature_names"], artifacts["log_features"], artifacts["clip_bounds"])
             scaled = artifacts["scaler"].transform(matrix).astype(np.float32)
@@ -147,10 +183,16 @@ def _evaluate_dataset(paths: Sequence[Path], artifacts, label_hint: str | None, 
     y = np.concatenate(y_true).astype(int); err = np.concatenate(scores).astype(np.float32)
     threshold = float(threshold_override if threshold_override is not None else artifacts["threshold"].threshold)
     preds = (err > threshold).astype(int)
+    num_sequences = len(sequence_values) if sequence_values else len(paths)
     metrics = {
-        "samples": int(len(y)), "positives": int(y.sum()), "threshold": threshold,
-        "accuracy": float(accuracy_score(y, preds)), "precision": float(precision_score(y, preds, zero_division=0)),
-        "recall": float(recall_score(y, preds, zero_division=0)), "f1": float(f1_score(y, preds, zero_division=0)),
+        "accuracy": float(accuracy_score(y, preds)),
+        "precision": float(precision_score(y, preds, zero_division=0)),
+        "recall": float(recall_score(y, preds, zero_division=0)),
+        "f1": float(f1_score(y, preds, zero_division=0)),
+        "threshold": threshold,
+        "num_windows": int(total_windows),
+        "num_sequences": int(num_sequences),
+        "positives": int(y.sum()),
     }
     metrics["roc_auc"] = float(roc_auc_score(y, err)) if len(np.unique(y)) > 1 else None
     err_stats = {
@@ -169,6 +211,7 @@ def parse_args():
     parser.add_argument("--artifacts", help="Override artifacts directory (defaults to config paths)")
     parser.add_argument("--eval-dir", default=str(DEFAULT_EVAL_DIR), help="Directory to store evaluation artifacts")
     parser.add_argument("--label-column", help="Explicit label column name to use")
+    parser.add_argument("--split", help="Optional split label for metrics output")
     parser.add_argument("--device", default="cpu", help="Torch device for inference")
     parser.add_argument("--batch-size", type=int, default=4096, help="Inference batch size")
     parser.add_argument("--rows-per-batch", type=int, default=50000, help="Parquet rows per streaming batch")
@@ -178,6 +221,8 @@ def parse_args():
 
 def main():
     args = parse_args()
+    start_wall = time.perf_counter()
+    start_cpu = time.process_time()
     config = load_config(_resolve(args.config))
     artifacts = _load_artifacts(config, args.artifacts, args.device)
     windows = _collect_windows(args.windows, config)
@@ -190,6 +235,16 @@ def main():
         args.batch_size,
         args.threshold,
     )
+    elapsed_seconds = time.perf_counter() - start_wall
+    cpu_seconds = time.process_time() - start_cpu
+    cpu_percent = (cpu_seconds / elapsed_seconds * 100.0) if elapsed_seconds > 0 else 0.0
+    metrics.update({
+        "split": _guess_split(windows, args.split),
+        "checkpoint": str(artifacts["model_path"]),
+        "elapsed_seconds": float(elapsed_seconds),
+        "cpu_percent": float(cpu_percent),
+        "memory_gb": _memory_gb(),
+    })
     (eval_dir / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
     np.save(eval_dir / "confusion_matrix.npy", cm)
     log_path = eval_dir / "log.txt"

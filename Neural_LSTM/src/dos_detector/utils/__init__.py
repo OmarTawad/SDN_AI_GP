@@ -1,3 +1,6 @@
+<<<<<<< HEAD
+#src/dos_detector/utils/__init__.py
+=======
 """Utility helpers exposed at the package root."""
 
 from __future__ import annotations
@@ -46,3 +49,4 @@ def resolve_project_root(anchor: str = "Neural_LSTM") -> Path:
 
 
 __all__ = ["CPU_DEVICE", "configure_cpu_environment", "resolve_project_root"]
+>>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7

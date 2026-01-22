@@ -1,0 +1,23 @@
+{
+  "schema": {
+    "M": 8,
+    "seq_feature_count": 14
+  },
+  "files": [
+    {
+      "path": "cache/shard_00000.parquet"
+    },
+    {
+      "path": "cache/shard_00001.parquet"
+    },
+    {
+      "path": "cache/shard_00002.parquet"
+    },
+    {
+      "path": "cache/shard_00003.parquet"
+    },
+    {
+      "path": "cache/shard_00004.parquet"
+    }
+  ]
+}

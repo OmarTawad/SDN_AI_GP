@@ -4,6 +4,14 @@
 from __future__ import annotations
 
 import json
+<<<<<<< HEAD
+from pathlib import Path
+from typing import Any, Dict
+
+import joblib
+import pandas as pd
+
+=======
 import os
 from pathlib import Path
 from typing import Any, Dict, Iterator, Sequence
@@ -21,6 +29,7 @@ ALLOW_PARQUET = os.getenv("DOS_ENABLE_PARQUET") == "1"
 PARQUET_EXTENSIONS = {".parquet", ".pqt"}
 CSV_EXTENSIONS = {".csv"}
 
+>>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
 
 def ensure_dir(path: Path) -> None:
     """Ensure that a directory exists."""
@@ -39,11 +48,27 @@ def save_json(path: Path, payload: Dict[str, Any]) -> None:
 def load_json(path: Path) -> Dict[str, Any]:
     """Load a JSON dictionary."""
 
+<<<<<<< HEAD
+=======
     path = Path(path).resolve()
+>>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
     with path.open("r", encoding="utf-8") as handle:
         return json.load(handle)
 
 
+<<<<<<< HEAD
+def save_dataframe(path: Path, frame: pd.DataFrame) -> None:
+    """Persist a dataframe to Parquet."""
+
+    ensure_dir(path.parent)
+    frame.to_parquet(path, index=False)
+
+
+def load_dataframe(path: Path) -> pd.DataFrame:
+    """Load a dataframe from Parquet."""
+
+    return pd.read_parquet(path)
+=======
 def _suffix(path: Path) -> str:
     return path.suffix.lower()
 
@@ -108,6 +133,7 @@ def stream_dataframe(path: Path, columns: Sequence[str] | None = None, chunk_siz
             yield batch.to_pandas()
         return
     raise ValueError(f"Unsupported dataframe format: {path}")
+>>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
 
 
 def save_joblib(path: Path, obj: Any) -> None:
@@ -120,6 +146,9 @@ def save_joblib(path: Path, obj: Any) -> None:
 def load_joblib(path: Path) -> Any:
     """Load a Python object saved with joblib."""
 
+<<<<<<< HEAD
+    return joblib.load(path)
+=======
     return joblib.load(path)
 
 
@@ -144,3 +173,4 @@ def resolve_processed_frame(processed_dir: Path, name: str) -> Path:
         if candidate.exists():
             return candidate
     raise FileNotFoundError(f"Missing processed features for {name} (expected under {processed_dir})")
+>>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7

@@ -1,6 +1,9 @@
 numpy
 pandas
+<<<<<<< HEAD
+=======
 fastparquet
+>>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
 pyarrow
 scikit-learn
 tqdm

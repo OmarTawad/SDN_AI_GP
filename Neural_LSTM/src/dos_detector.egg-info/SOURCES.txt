@@ -1,5 +1,15 @@
 README.md
 pyproject.toml
+<<<<<<< HEAD
+Neural_LSTM/src/dos_detector/__init__.py
+Neural_LSTM/src/dos_detector/cli.py
+Neural_LSTM/src/dos_detector.egg-info/PKG-INFO
+Neural_LSTM/src/dos_detector.egg-info/SOURCES.txt
+Neural_LSTM/src/dos_detector.egg-info/dependency_links.txt
+Neural_LSTM/src/dos_detector.egg-info/entry_points.txt
+Neural_LSTM/src/dos_detector.egg-info/requires.txt
+Neural_LSTM/src/dos_detector.egg-info/top_level.txt
+=======
 src/dos_detector/__init__.py
 src/dos_detector/cli.py
 src/dos_detector.egg-info/PKG-INFO
@@ -45,3 +55,4 @@ tests/test_inference_activity.py
 tests/test_labeling.py
 tests/test_seed.py
 tests/test_training_pipeline.py
+>>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
