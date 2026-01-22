@@ -28,7 +28,7 @@ class FeaturePipeline:
         limit_env = os.getenv("DOS_LIMIT_PKTS")
         pkt_limit = int(limit_env) if (limit_env and limit_env.isdigit()) else None
         
-        byte_limit = int(limit_mb * 1024 * 1024) if limit_mb > 0 else None
+        byte_limit = int(limit_mb * 1024 * 1024) if limit_mb is not None and limit_mb > 0 else None
 
         t0 = time.perf_counter()
         packets = read_pcap(pcap_path, limit=pkt_limit, byte_limit=byte_limit)
