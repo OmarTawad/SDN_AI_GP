@@ -165,7 +165,8 @@ class FeaturePipeline:
                 print(f"[SKIP] {p.name}: {e}", flush=True)
                 continue
 
-        save_json(self.config.paths.manifest_path, {"feature_columns": feature_cols, "frames": frames_meta})
+        # Save manifest to the output directory, ensuring consistency
+        save_json(out_dir / "feature_manifest.json", {"feature_columns": feature_cols, "frames": frames_meta})
         return {"feature_columns": feature_cols, "frames": frames_meta}
 
     def _build_host_maps(self, windows: Iterable[Window]) -> Dict[str, Dict[int, Dict[str, int]]]:
