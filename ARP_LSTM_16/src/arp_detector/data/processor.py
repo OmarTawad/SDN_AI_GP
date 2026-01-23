@@ -29,12 +29,12 @@ class FeaturePipeline:
 
     def process_single(self, pcap_path: Path, limit: int = 0, limit_mb: float = 0.0) -> Tuple[pd.DataFrame, object]:
         limit_env = os.getenv("ARP_LIMIT_PKTS")
-        limit = int(limit_env) if (limit_env and limit_env.isdigit()) else None
+        env_limit = int(limit_env) if (limit_env and limit_env.isdigit()) else None
 
         byte_limit = int(limit_mb * 1024 * 1024) if limit_mb is not None and limit_mb > 0 else None
 
         t0 = time.perf_counter()
-        packets = read_pcap(pcap_path, limit=limit, byte_limit=byte_limit)
+        packets = read_pcap(pcap_path, limit=env_limit if env_limit is not None else limit, byte_limit=byte_limit)
         t1 = time.perf_counter()
 
         builder = WindowBuilder(WindowingParams(
@@ -43,8 +43,9 @@ class FeaturePipeline:
             max_windows=self.config.windowing.max_windows,
         ))
         windows = list(builder.build(packets))
-        if limit > 0:
-            windows = windows[:limit]
+        eff_limit = env_limit if env_limit is not None else limit
+        if eff_limit and eff_limit > 0:
+            windows = windows[:eff_limit]
         self._last_windows = windows
         self._last_host_maps = self._build_host_maps(self._last_windows)
         t2 = time.perf_counter()
