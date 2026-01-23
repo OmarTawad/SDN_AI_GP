@@ -6,7 +6,7 @@ paths:
   reports_dir: reports
   scaler_path: models/feature_scaler.joblib
   supervised_model_path: models/supervised.pt
-  manifest_path: data/processed/feature_manifest.json
+  manifest_path: ../data/processed/feature_manifest.json
   metrics_path: reports/metrics_summary.json
 windowing:
   window_size: 1.0

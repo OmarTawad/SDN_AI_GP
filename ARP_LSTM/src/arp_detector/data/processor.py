@@ -42,35 +42,86 @@ class FeaturePipeline:
             hop_size=self.config.windowing.hop_size,
             max_windows=self.config.windowing.max_windows,
         ))
-        windows = list(builder.build(packets))
-        if limit > 0:
-            windows = windows[:limit]
-        self._last_windows = windows
-        self._last_host_maps = self._build_host_maps(self._last_windows)
-        t2 = time.perf_counter()
-
-        frame = self.extractor.extract(windows)
-        frame.insert(0, "pcap", pcap_path.name)
-        t3 = time.perf_counter()
-
+        
+        window_gen = builder.build(packets)
+        
+        self._last_windows = []
+        self._last_host_maps = {
+            "macs": {},
+            "ips": {},
+            "claims": {},
+            "reply_claims": {},
+        }
+        
+        frames: List[pd.DataFrame] = []
+        chunk: List[Window] = []
+        chunk_size = 5000
+        processed_windows = 0
+        
+        eff_limit = limit
+        
         intervals_csv = self.config.labels.intervals_csv
+        intervals = []
         if intervals_csv and Path(intervals_csv).exists():
             intervals_map = load_attack_intervals(Path(intervals_csv), self.config.labels)
             intervals = intervals_map.get(pcap_path.name, [])
+            
+        t2 = time.perf_counter()
+        
+        for window in window_gen:
+            chunk.append(window)
+            processed_windows += 1
+            
+            if eff_limit and eff_limit > 0 and processed_windows >= eff_limit:
+                 break
+
+            if len(chunk) >= chunk_size:
+                self._process_chunk(chunk, frames, pcap_path, intervals)
+                chunk = []
+                gc.collect()
+
+        if chunk:
+            self._process_chunk(chunk, frames, pcap_path, intervals)
+            chunk = []
+            gc.collect()
+
+        t3 = time.perf_counter() 
+
+        if not frames:
+             df_empty = self.extractor.extract([])
+             df_empty.insert(0, "pcap", pcap_path.name)
+             df_empty["attack"] = 0
+             df_empty["family"] = self.config.labels.default_family
+             df_empty["family_index"] = 0
+             return df_empty, summarize_packets(packets, pcap_path)
+
+        full_frame = pd.concat(frames, ignore_index=True)
+
+        fmap = self.config.labels.family_mapping
+        full_frame["family_index"] = full_frame["family"].map(lambda f: fmap.get(str(f).lower(), 0)).astype("int64")
+        t4 = time.perf_counter()
+
+        print(f"[{pcap_path.name}] read={t1-t0:.1f}s  proc={t4-t1:.1f}s  rows={len(full_frame)}", flush=True)
+        return full_frame, summarize_packets(packets, pcap_path)
+
+    def _process_chunk(self, windows: List[Window], frames: List[pd.DataFrame], pcap_path: Path, intervals: List[object]):
+        chunk_maps = self._build_host_maps(windows)
+        for key in self._last_host_maps:
+            if key in chunk_maps:
+                self._last_host_maps[key].update(chunk_maps[key])
+
+        frame = self.extractor.extract(windows)
+        frame.insert(0, "pcap", pcap_path.name)
+        
+        if intervals:
             labs = label_windows(windows, intervals, self.config.labels)
             frame["attack"] = [x.attack for x in labs]
             frame["family"] = [x.family for x in labs]
         else:
             frame["attack"] = 0
             frame["family"] = self.config.labels.default_family
-
-        fmap = self.config.labels.family_mapping
-        frame["family_index"] = frame["family"].map(lambda f: fmap.get(str(f).lower(), 0)).astype("int64")
-        t4 = time.perf_counter()
-
-        # lightweight, explicit stage logs
-        print(f"[{pcap_path.name}] read={t1-t0:.1f}s  windows={t2-t1:.1f}s  features={t3-t2:.1f}s  label={t4-t3:.1f}s  rows={len(frame)}", flush=True)
-        return frame, summarize_packets(packets, pcap_path)
+            
+        frames.append(frame)
 
     def last_windows(self) -> List[Window]:
         """Return the windows generated during the most recent processing call."""
