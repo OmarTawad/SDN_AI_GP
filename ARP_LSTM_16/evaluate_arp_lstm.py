@@ -191,6 +191,8 @@ def main() -> None:
     )
 
     print(json.dumps(metrics, indent=2))
+    print("\nClassification Report:")
+    print(report)
     print(f"\nPer-class report written to {log_path}")
     print("✅ “arp_lstm evaluation complete – metrics saved under arp_lstm/eval/metrics.json”")
 
