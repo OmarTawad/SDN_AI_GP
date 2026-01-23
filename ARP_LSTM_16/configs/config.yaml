@@ -1,13 +1,13 @@
 seed: 42
 paths:
-  raw_pcap_dir: ../pcaps
-  processed_dir: ../data/processed
-  models_dir: ../models_fp16
-  reports_dir: ../reports_fp16
-  scaler_path: ../models_fp16/feature_scaler_fp16.joblib
-  supervised_model_path: ../models_fp16/supervised_fp16.pt
-  manifest_path: ../data/processed/feature_manifest.json
-  metrics_path: ../reports_fp16/metrics_summary.json
+  raw_pcap_dir: pcaps
+  processed_dir: data/processed
+  models_dir: models_fp16
+  reports_dir: reports_fp16
+  scaler_path: models_fp16/feature_scaler_fp16.joblib
+  supervised_model_path: models_fp16/supervised_fp16.pt
+  manifest_path: data/processed/feature_manifest.json
+  metrics_path: reports_fp16/metrics_summary.json
 windowing:
   window_size: 1.0
   hop_size: 0.5
