@@ -24,9 +24,9 @@ def main():
 
     man = load_json(cfg.paths.manifest_path)
     all_files = [x["pcap"] for x in man["frames"]]
-    val_set = set(f"samples/{v.strip()}" if not v.strip().startswith("samples/") else v.strip()
-                  for v in args.val.split(",") if v.strip())
-    cfg.data.val_files = sorted([f for f in all_files if f in val_set])
+    val_set = set(v.strip() for v in args.val.split(",") if v.strip())
+    # Match by simple basename (if v is in path) or exact match
+    cfg.data.val_files = sorted([f for f in all_files if any(v in f for v in val_set)])
     cfg.data.train_files = sorted([f for f in all_files if f not in val_set])
 
     print("[cfg] seq_len/stride:", cfg.windowing.sequence_length, cfg.windowing.sequence_stride)
