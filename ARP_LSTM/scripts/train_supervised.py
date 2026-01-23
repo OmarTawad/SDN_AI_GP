@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-import argparse, torch
+import argparse, torch, os
+os.environ["CUDA_VISIBLE_DEVICES"] = ""
 from arp_detector.config import load_config
 from arp_detector.utils.io import load_json
 from arp_detector.training.supervised_trainer import SupervisedTrainer
