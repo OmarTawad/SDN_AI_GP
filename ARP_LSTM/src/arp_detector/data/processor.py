@@ -229,9 +229,26 @@ class FeaturePipeline:
                 print(f"[SKIP] {p.name}: {e}", flush=True)
                 continue
 
+        # Load existing manifest if present to support incremental updates
+        manifest_path = out_dir / "feature_manifest.json"
+        existing_frames = []
+        if manifest_path.exists():
+             try:
+                 existing_data = json.loads(manifest_path.read_text())
+                 existing_frames = existing_data.get("frames", [])
+                 # Use existing feature cols if we didn't extract any new ones (unlikely but safe)
+                 if not feature_cols:
+                     feature_cols = existing_data.get("feature_columns", [])
+             except Exception:
+                 pass
+
+        # Merge and deduplicate by pcap name (prefer new entry)
+        new_names = {f["pcap"] for f in frames_meta}
+        merged_frames = [f for f in existing_frames if f["pcap"] not in new_names] + frames_meta
+        
         # Save manifest to the output directory
-        save_json(out_dir / "feature_manifest.json", {"feature_columns": feature_cols, "frames": frames_meta})
-        return {"feature_columns": feature_cols, "frames": frames_meta}
+        save_json(manifest_path, {"feature_columns": feature_cols, "frames": merged_frames})
+        return {"feature_columns": feature_cols, "frames": merged_frames}
 
     def _build_host_maps(self, windows: Iterable[Window]) -> Dict[str, Dict[int, Dict[str, int]]]:
         macs: Dict[int, Dict[str, int]] = {}
