@@ -22,6 +22,14 @@ class FeaturePipeline:
         self._last_windows: List[Window] = []
         self._last_host_maps: Dict[str, Dict[int, Dict[str, int]]] = {"macs": {}, "ips": {}}
 
+<<<<<<< HEAD
+    def process_single(self, pcap_path: Path) -> Tuple[pd.DataFrame, object]:
+        limit_env = os.getenv("DOS_LIMIT_PKTS")
+        limit = int(limit_env) if (limit_env and limit_env.isdigit()) else None
+
+        t0 = time.perf_counter()
+        packets = read_pcap(pcap_path, limit=limit)
+=======
     def process_single(self, pcap_path: Path, limit: int = 0, limit_mb: float = 0.0) -> Tuple[pd.DataFrame, object]:
         limit_env = os.getenv("DOS_LIMIT_PKTS")
         pkt_limit = int(limit_env) if (limit_env and limit_env.isdigit()) else None
@@ -30,6 +38,7 @@ class FeaturePipeline:
 
         t0 = time.perf_counter()
         packets = read_pcap(pcap_path, limit=pkt_limit, byte_limit=byte_limit)
+>>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
         t1 = time.perf_counter()
 
         builder = WindowBuilder(WindowingParams(
@@ -37,10 +46,15 @@ class FeaturePipeline:
             hop_size=self.config.windowing.hop_size,
             max_windows=self.config.windowing.max_windows,
         ))
+<<<<<<< HEAD
+        windows = builder.build(packets)
+        self._last_windows = list(windows)
+=======
         windows = list(builder.build(packets))
         if limit > 0:
             windows = windows[:limit]
         self._last_windows = windows
+>>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
         self._last_host_maps = self._build_host_maps(self._last_windows)
         t2 = time.perf_counter()
 
