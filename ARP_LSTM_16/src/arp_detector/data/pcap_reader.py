@@ -146,7 +146,11 @@ def read_pcap(path: Path, limit: Optional[int] = None, byte_limit: Optional[int]
     packets: List[PacketRecord] = []
     reader = RawPcapReader(str(path))
     try:
-        total = _capinfos_count(path)
+        # Skip capinfos if we are just reading a byte prefix (avoid scanning full file)
+        total = None
+        if byte_limit is None:
+            total = _capinfos_count(path)
+        
         it = enumerate(reader)
         if total:
             it = progress(it, total=total, desc=f"Reading {path.name}", unit="pkt", leave=False)
