@@ -41,6 +41,7 @@ class FeaturePipeline:
         t0 = time.perf_counter()
         packets = read_pcap(pcap_path, limit=eff_limit, byte_limit=byte_limit)
         t1 = time.perf_counter()
+        print(f"    Read {len(packets)} packets in {t1-t0:.2f}s. Building windows...", flush=True)
 
         builder = WindowBuilder(WindowingParams(
             window_size=self.config.windowing.window_size,
