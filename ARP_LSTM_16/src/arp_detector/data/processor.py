@@ -34,7 +34,12 @@ class FeaturePipeline:
         byte_limit = int(limit_mb * 1024 * 1024) if limit_mb is not None and limit_mb > 0 else None
 
         t0 = time.perf_counter()
-        packets = read_pcap(pcap_path, limit=pkt_limit, byte_limit=byte_limit)
+        if limit <= 0:
+            limit = None
+        eff_limit = pkt_limit if pkt_limit is not None else limit
+        
+        t0 = time.perf_counter()
+        packets = read_pcap(pcap_path, limit=eff_limit, byte_limit=byte_limit)
         t1 = time.perf_counter()
 
         builder = WindowBuilder(WindowingParams(

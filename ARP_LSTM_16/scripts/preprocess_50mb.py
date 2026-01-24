@@ -41,7 +41,7 @@ def main():
     print(f"Found {len(paths)} files. Processing with 50MB limit...")
     
     # Process with strict 50MB limit
-    pipeline.process_files(paths, target_dir, limit=0, limit_mb=None)
+    pipeline.process_files(paths, target_dir, limit=0, limit_mb=50.0)
     
     print(f"Done. Processed features saved to {target_dir}")
 
