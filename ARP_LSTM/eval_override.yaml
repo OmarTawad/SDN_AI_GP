@@ -1,6 +1,6 @@
 seed: 42
 paths:
-  raw_pcap_dir: ../pcaps
+  raw_pcap_dir: pcaps
   processed_dir: data/processed
   models_dir: models
   reports_dir: reports
@@ -13,10 +13,10 @@ windowing:
   hop_size: 0.5
   sequence_length: 30
   sequence_stride: 30
-  max_windows: 10000000
+  max_windows: 50000
 feature: {}
 labels:
-  intervals_csv: data/arp_attack_intervals.csv
+  intervals_csv: ../data/arp_attack_intervals.csv
   default_family: normal
   family_mapping:
     normal: 0
@@ -24,25 +24,15 @@ labels:
   attack_families:
   - arp_spoof
 data:
-  train_files:
-  - attack.pcap
-  - normal1.pcap
-  - normal2.pcap
-  - synthetic_arp_spoof.pcap
-  - synthetic_arp_spoof_extended.pcap
-  val_files:
-  - attack.pcap
-  - normal1.pcap
-  - normal2.pcap
-  - synthetic_arp_spoof.pcap
-  - synthetic_arp_spoof_extended.pcap
+  train_files: []
+  val_files: []
   test_files: []
   normal_families:
   - normal
 training:
   supervised:
     batch_size: 8
-    num_workers: 0
+    num_workers: 2
     max_epochs: 50
     learning_rate: 0.0005
     weight_decay: 0.01
@@ -73,3 +63,9 @@ explainability:
 live:
   interface: any
   flush_seconds: 1.0
+
+data:
+  test_files:
+    - /home/roots/SDN_AI_GP/samples/attack.pcap
+  train_files: []
+  val_files: []

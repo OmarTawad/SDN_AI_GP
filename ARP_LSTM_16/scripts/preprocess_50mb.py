@@ -13,7 +13,7 @@ from arp_detector.utils.io import ensure_dir
 
 def main():
     parser = argparse.ArgumentParser(description="Preprocess PCAP files with a 50MB limit per file.")
-    parser.add_argument("pcaps", help="Glob pattern for PCAP files")
+    parser.add_argument("pcaps", nargs='+', help="Glob patterns for PCAP files")
     parser.add_argument("--out", type=Path, default=None, help="Output directory for processed features")
     parser.add_argument("--config", type=Path, default=Path("configs/config.yaml"), help="Path to configuration file")
     
@@ -30,15 +30,18 @@ def main():
     ensure_dir(target_dir)
     
     # Resolve files
-    paths = sorted(Path(p) for p in glob.glob(args.pcaps))
+    paths = []
+    for pattern in args.pcaps:
+        paths.extend(Path(p) for p in glob.glob(pattern))
+    paths = sorted(list(set(paths)))
     if not paths:
         print(f"No PCAPs matched pattern: {args.pcaps}", file=sys.stderr)
         sys.exit(1)
         
-    print(f"Found {len(paths)} files. Processing (limit_mb=None, max_windows={config.windowing.max_windows})...")
+    print(f"Found {len(paths)} files. Processing with 50MB limit...")
     
     # Process with strict 50MB limit
-    pipeline.process_files(paths, target_dir, limit=0, limit_mb=None)
+    pipeline.process_files(paths, target_dir, limit=0, limit_mb=50.0)
     
     print(f"Done. Processed features saved to {target_dir}")
 

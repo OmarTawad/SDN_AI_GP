@@ -1,2 +1,9 @@
 pcap,start,end,family
-attack.pcap,2014-01-07T02:56:29.446972,2014-01-07T02:56:44.433425,arp_spoof
+samples/attack.pcap,2014-01-07T02:56:29.446972,2014-01-07T02:56:44.433425,arp_spoof
+samples/pure_attack.pcap,2014-01-06T22:56:34.433255,2014-01-06T22:56:34.433441,arp_spoof
+samples/pure_attack.pcap,2014-01-06T22:56:36.933718,2014-01-06T22:56:36.934231,arp_spoof
+samples/pure_attack.pcap,2014-01-06T22:56:39.432890,2014-01-06T22:56:39.433890,arp_spoof
+samples/pure_attack2.pcap,2015-10-06T09:28:18.174006,2015-10-06T09:28:28.204650,arp_spoof
+samples/synthetic_arp_spoof.pcap,2025-09-22T11:14:35,2025-09-22T11:16:24,arp_spoof
+samples/normal1.pcap,,,normal
+samples/normal2.pcap,,,normal

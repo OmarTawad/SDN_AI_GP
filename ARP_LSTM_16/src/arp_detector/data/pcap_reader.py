@@ -6,17 +6,6 @@ from pathlib import Path
 from typing import Iterator, List, Optional
 import shutil, subprocess
 
-# Avoid interface discovery that requires elevated permissions; we only need offline PCAP parsing.
-import scapy.config
-from types import SimpleNamespace
-from scapy.config import conf
-
-scapy.config._set_conf_sockets = lambda: None  # type: ignore[assignment]
-if getattr(conf, "ifaces", None) is None:
-    conf.ifaces = SimpleNamespace(reload=lambda *args, **kwargs: None)
-else:
-    conf.ifaces.reload = lambda *args, **kwargs: None  # type: ignore[assignment]
-
 from scapy.all import ARP, ICMP, IP, IPv6, RawPcapReader, TCP, UDP, Ether
 from ..utils.progress import progress
 from .structures import PacketRecord
@@ -146,10 +135,16 @@ def read_pcap(path: Path, limit: Optional[int] = None, byte_limit: Optional[int]
     packets: List[PacketRecord] = []
     reader = RawPcapReader(str(path))
     try:
-        total = _capinfos_count(path)
+        # Skip capinfos if we are just reading a byte prefix (avoid scanning full file)
+        total = None
+        if byte_limit is None:
+            total = _capinfos_count(path)
+        
         it = enumerate(reader)
         if total:
             it = progress(it, total=total, desc=f"Reading {path.name}", unit="pkt", leave=False)
+        else:
+            it = progress(it, desc=f"Reading {path.name} (limit={byte_limit}B)", unit="pkt", leave=False)
         
         accumulated_bytes = 0
         for index, (data, meta) in it:
@@ -160,7 +155,7 @@ def read_pcap(path: Path, limit: Optional[int] = None, byte_limit: Optional[int]
                 accumulated_bytes += len(data)
                 if accumulated_bytes > byte_limit:
                     break
-
+            
             ts = _timestamp_from_meta(meta)
             rec = _decode_packet(data, ts)
             if rec is not None:
