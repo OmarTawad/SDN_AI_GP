@@ -34,22 +34,17 @@ class FeaturePipeline:
         byte_limit = int(limit_mb * 1024 * 1024) if limit_mb is not None and limit_mb > 0 else None
 
         t0 = time.perf_counter()
-<<<<<<< HEAD
-        packets = read_pcap(pcap_path, limit=env_limit if env_limit is not None else limit, byte_limit=byte_limit)
-        
-        # FIX: Subtract 4 hours (14400 seconds) from all packet timestamps
-        # This addresses the issue where data appears "4 hours ahead" due to timezone mismatch.
-        for pkt in packets:
-            pkt.timestamp -= 14400.0
-            
-=======
         if limit <= 0:
             limit = None
         eff_limit = pkt_limit if pkt_limit is not None else limit
         
         t0 = time.perf_counter()
         packets = read_pcap(pcap_path, limit=eff_limit, byte_limit=byte_limit)
->>>>>>> e6a761e48fe24a17dd0034a1df3664a252588ffa
+        
+        # FIX: Subtract 4 hours (14400 seconds) from all packet timestamps
+        # This addresses the issue where data appears "4 hours ahead" due to timezone mismatch.
+        for pkt in packets:
+            pkt.timestamp -= 14400.0
         t1 = time.perf_counter()
 
         builder = WindowBuilder(WindowingParams(
