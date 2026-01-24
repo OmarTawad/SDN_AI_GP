@@ -29,19 +29,13 @@ class FeaturePipeline:
 
     def process_single(self, pcap_path: Path, limit: int = 0, limit_mb: float = 0.0) -> Tuple[pd.DataFrame, object]:
         limit_env = os.getenv("ARP_LIMIT_PKTS")
-        env_limit = int(limit_env) if (limit_env and limit_env.isdigit()) else None
-
+        pkt_limit = int(limit_env) if (limit_env and limit_env.isdigit()) else None
+        
         byte_limit = int(limit_mb * 1024 * 1024) if limit_mb is not None and limit_mb > 0 else None
 
         t0 = time.perf_counter()
-        if limit <= 0:
-            limit = None
-        eff_limit = env_limit if env_limit is not None else limit
-        
-        t0 = time.perf_counter()
-        packets = read_pcap(pcap_path, limit=eff_limit, byte_limit=byte_limit)
+        packets = read_pcap(pcap_path, limit=pkt_limit, byte_limit=byte_limit)
         t1 = time.perf_counter()
-        print(f"    Read {len(packets)} packets in {t1-t0:.2f}s. Building windows...", flush=True)
 
         builder = WindowBuilder(WindowingParams(
             window_size=self.config.windowing.window_size,
@@ -63,17 +57,17 @@ class FeaturePipeline:
         chunk: List[Window] = []
         chunk_size = 5000
         processed_windows = 0
-        eff_limit = env_limit if env_limit is not None else limit
+        
+        eff_limit = limit
         
         intervals_csv = self.config.labels.intervals_csv
         intervals = []
         if intervals_csv and Path(intervals_csv).exists():
             intervals_map = load_attack_intervals(Path(intervals_csv), self.config.labels)
             intervals = intervals_map.get(pcap_path.name, [])
-
+            
         t2 = time.perf_counter()
-        t2_start = t2 # Initialize for safety
-
+        
         for window in window_gen:
             chunk.append(window)
             processed_windows += 1
@@ -91,7 +85,7 @@ class FeaturePipeline:
             chunk = []
             gc.collect()
 
-        t3 = time.perf_counter() # Approximation of 'features done'
+        t3 = time.perf_counter() 
 
         if not frames:
              df_empty = self.extractor.extract([])
@@ -118,7 +112,7 @@ class FeaturePipeline:
 
         frame = self.extractor.extract(windows)
         frame.insert(0, "pcap", pcap_path.name)
-
+        
         if intervals:
             labs = label_windows(windows, intervals, self.config.labels)
             frame["attack"] = [x.attack for x in labs]
@@ -235,9 +229,26 @@ class FeaturePipeline:
                 print(f"[SKIP] {p.name}: {e}", flush=True)
                 continue
 
+        # Load existing manifest if present to support incremental updates
+        manifest_path = out_dir / "feature_manifest.json"
+        existing_frames = []
+        if manifest_path.exists():
+             try:
+                 existing_data = json.loads(manifest_path.read_text())
+                 existing_frames = existing_data.get("frames", [])
+                 # Use existing feature cols if we didn't extract any new ones (unlikely but safe)
+                 if not feature_cols:
+                     feature_cols = existing_data.get("feature_columns", [])
+             except Exception:
+                 pass
+
+        # Merge and deduplicate by pcap name (prefer new entry)
+        new_names = {f["pcap"] for f in frames_meta}
+        merged_frames = [f for f in existing_frames if f["pcap"] not in new_names] + frames_meta
+        
         # Save manifest to the output directory
-        save_json(out_dir / "feature_manifest.json", {"feature_columns": feature_cols, "frames": frames_meta})
-        return {"feature_columns": feature_cols, "frames": frames_meta}
+        save_json(manifest_path, {"feature_columns": feature_cols, "frames": merged_frames})
+        return {"feature_columns": feature_cols, "frames": merged_frames}
 
     def _build_host_maps(self, windows: Iterable[Window]) -> Dict[str, Dict[int, Dict[str, int]]]:
         macs: Dict[int, Dict[str, int]] = {}
