@@ -35,10 +35,10 @@ def main():
         print(f"No PCAPs matched pattern: {args.pcaps}", file=sys.stderr)
         sys.exit(1)
         
-    print(f"Found {len(paths)} files. Processing (limit_mb=None, max_windows={config.windowing.max_windows})...")
+    print(f"Found {len(paths)} files. Processing (limit_mb=50.0, max_windows={config.windowing.max_windows})...")
     
     # Process with strict 50MB limit
-    pipeline.process_files(paths, target_dir, limit=0, limit_mb=None)
+    pipeline.process_files(paths, target_dir, limit=0, limit_mb=50.0)
     
     print(f"Done. Processed features saved to {target_dir}")
 
