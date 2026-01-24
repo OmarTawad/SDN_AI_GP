@@ -5,7 +5,8 @@ import glob
 from pathlib import Path
 
 # Ensure src is in python path if running locally without install
-sys.path.append(str(Path(__file__).resolve().parent.parent / "src"))
+# Ensure src is in python path if running locally without install
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from arp_detector.config import load_config
 from arp_detector.data.processor import FeaturePipeline
@@ -38,7 +39,7 @@ def main():
     print(f"Found {len(paths)} files. Processing with 50MB limit...")
     
     # Process with strict 50MB limit
-    pipeline.process_files(paths, target_dir, limit=0, limit_mb=None)
+    pipeline.process_files(paths, target_dir, limit=0, limit_mb=50.0)
     
     print(f"Done. Processed features saved to {target_dir}")
 

@@ -3,6 +3,7 @@ import argparse, torch
 from arp_detector.config import load_config
 from arp_detector.utils.io import load_json
 from arp_detector.training.supervised_trainer import SupervisedTrainer
+from pathlib import Path
 
 torch.set_num_threads(2)
 
@@ -23,10 +24,11 @@ def main():
 
     man = load_json(cfg.paths.manifest_path)
     all_files = [x["pcap"] for x in man["frames"]]
-    val_set = set(f"samples/{v.strip()}" if not v.strip().startswith("samples/") else v.strip()
-                  for v in args.val.split(",") if v.strip())
-    cfg.data.val_files = sorted([f for f in all_files if f in val_set])
-    cfg.data.train_files = sorted([f for f in all_files if f not in val_set])
+    # Robust matching: check if requested val file (basename) matches exactly
+    val_set = set(v.strip() for v in args.val.split(",") if v.strip())
+    # Match if: exact string match matches, OR if the file path's name matches the requested name
+    cfg.data.val_files = sorted([f for f in all_files if any(v == f or Path(f).name == v for v in val_set)])
+    cfg.data.train_files = sorted([f for f in all_files if f not in cfg.data.val_files])
 
     print("[cfg] seq_len/stride:", cfg.windowing.sequence_length, cfg.windowing.sequence_stride)
     print("[cfg] train_files:", len(cfg.data.train_files))
