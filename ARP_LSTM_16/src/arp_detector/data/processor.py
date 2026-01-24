@@ -295,9 +295,3 @@ class FeaturePipeline:
                     for mac, claim_map in reply_counts.items()
                 }
         return {"macs": macs, "ips": ips, "claims": claims, "reply_claims": reply_claims}
-
-    def _host_cache_path(self, pcap_path: Path, directory: Path | None = None) -> Path | None:
-        base = directory if directory is not None else getattr(self.config.paths, "processed_dir", None)
-        if base is None:
-            return None
-        return Path(base) / f"{pcap_path.stem}_hosts.json"
