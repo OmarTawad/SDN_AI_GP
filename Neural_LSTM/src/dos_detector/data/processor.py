@@ -105,11 +105,7 @@ class FeaturePipeline:
             "ips": {int(idx): {ip: int(count) for ip, count in counts.items()} for idx, counts in data.get("ips", {}).items()},
         }
 
-<<<<<<< HEAD
-    def process_files(self, pcaps: Iterable[Path], out_dir: Path) -> Dict[str, object]:
-=======
     def process_files(self, pcaps: Iterable[Path], out_dir: Path, limit: int = 0, limit_mb: float = 0.0) -> Dict[str, object]:
->>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
         ensure_dir(out_dir)
         paths = [Path(p) for p in pcaps]
 
@@ -119,22 +115,14 @@ class FeaturePipeline:
         for idx, p in enumerate(progress(paths, desc="Extracting", unit="pcap"), 1):
             try:
                 print(f"--> ({idx}/{len(paths)}) {p.name}: start", flush=True)
-<<<<<<< HEAD
-                df, meta = self.process_single(p)
-=======
                 df, meta = self.process_single(p, limit=limit, limit_mb=limit_mb)
->>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
 
                 if not feature_cols:
                     feature_cols = [c for c in df.columns if c not in {
                         "pcap","window_index","window_start","window_end","attack","family","family_index"
                     }]
 
-<<<<<<< HEAD
                 save_dataframe(out_dir / f"{p.stem}.parquet", df)
-=======
-                save_dataframe(out_dir / f"{p.stem}.csv", df)
->>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
                 self.save_last_host_maps(p, out_dir)
                 frames_meta.append({
                     "pcap": p.name,
@@ -149,8 +137,24 @@ class FeaturePipeline:
                 print(f"[SKIP] {p.name}: {e}", flush=True)
                 continue
 
-        save_json(self.config.paths.manifest_path, {"feature_columns": feature_cols, "frames": frames_meta})
-        return {"feature_columns": feature_cols, "frames": frames_meta}
+        # Incremental manifest update
+        manifest_path = self.config.paths.manifest_path
+        existing_frames = []
+        if manifest_path.exists():
+             try:
+                 existing_data = json.loads(manifest_path.read_text())
+                 existing_frames = existing_data.get("frames", [])
+                 if not feature_cols:
+                     feature_cols = existing_data.get("feature_columns", [])
+             except Exception:
+                 pass
+        
+        # Merge, preferring new entries
+        new_names = {f["pcap"] for f in frames_meta}
+        merged_frames = [f for f in existing_frames if f["pcap"] not in new_names] + frames_meta
+        
+        save_json(manifest_path, {"feature_columns": feature_cols, "frames": merged_frames})
+        return {"feature_columns": feature_cols, "frames": merged_frames}
 
     def _build_host_maps(self, windows: Iterable[Window]) -> Dict[str, Dict[int, Dict[str, int]]]:
         macs: Dict[int, Dict[str, int]] = {}
