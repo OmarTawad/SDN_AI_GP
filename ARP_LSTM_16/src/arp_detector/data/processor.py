@@ -34,17 +34,13 @@ class FeaturePipeline:
         byte_limit = int(limit_mb * 1024 * 1024) if limit_mb is not None and limit_mb > 0 else None
 
         t0 = time.perf_counter()
-        if limit <= 0:
-            limit = None
-        eff_limit = pkt_limit if pkt_limit is not None else limit
-        
-        t0 = time.perf_counter()
-        packets = read_pcap(pcap_path, limit=eff_limit, byte_limit=byte_limit)
+        packets = read_pcap(pcap_path, limit=pkt_limit, byte_limit=byte_limit)
         
         # FIX: Subtract 4 hours (14400 seconds) from all packet timestamps
         # This addresses the issue where data appears "4 hours ahead" due to timezone mismatch.
         for pkt in packets:
             pkt.timestamp -= 14400.0
+            
         t1 = time.perf_counter()
 
         builder = WindowBuilder(WindowingParams(
@@ -300,3 +296,9 @@ class FeaturePipeline:
                     for mac, claim_map in reply_counts.items()
                 }
         return {"macs": macs, "ips": ips, "claims": claims, "reply_claims": reply_claims}
+
+    def _host_cache_path(self, pcap_path: Path, directory: Path | None = None) -> Path | None:
+        base = directory if directory is not None else getattr(self.config.paths, "processed_dir", None)
+        if base is None:
+            return None
+        return Path(base) / f"{pcap_path.stem}_hosts.json"
