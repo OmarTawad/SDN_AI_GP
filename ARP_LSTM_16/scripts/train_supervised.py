@@ -27,9 +27,10 @@ def main():
 
     man = load_json(cfg.paths.manifest_path)
     all_files = [x["pcap"] for x in man["frames"]]
-    # Robust matching: check if requested val file (basename) is in the full path or matches exactly
+    # Robust matching: check if requested val file (basename) matches exactly
     val_set = set(v.strip() for v in args.val.split(",") if v.strip())
-    cfg.data.val_files = sorted([f for f in all_files if any(v in f or Path(f).name == v for v in val_set)])
+    # Match if: exact string match matches, OR if the file path's name matches the requested name
+    cfg.data.val_files = sorted([f for f in all_files if any(v == f or Path(f).name == v for v in val_set)])
     cfg.data.train_files = sorted([f for f in all_files if f not in cfg.data.val_files])
 
     print("[cfg] seq_len/stride:", cfg.windowing.sequence_length, cfg.windowing.sequence_stride)

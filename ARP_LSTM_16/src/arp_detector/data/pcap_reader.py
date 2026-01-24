@@ -142,6 +142,10 @@ def read_pcap(path: Path, limit: Optional[int] = None, byte_limit: Optional[int]
         
         accumulated_bytes = 0
         for index, (data, meta) in it:
+            if index == 0:
+                raw_debug_ts = _timestamp_from_meta(meta)
+                print(f"[DEBUG] First Packet Timestamp: {raw_debug_ts} (Raw)")
+                
             if limit is not None and index >= limit:
                 break
             
