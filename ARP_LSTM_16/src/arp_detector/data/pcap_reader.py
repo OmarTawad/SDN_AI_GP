@@ -151,7 +151,7 @@ def read_pcap(path: Path, limit: Optional[int] = None, byte_limit: Optional[int]
                     break
             
             ts = _timestamp_from_meta(meta)
-            ts = _timestamp_from_meta(meta)
+            ts -= 14400.0 # FIX: Correct 4-hour timezone offset
             
             rec = _decode_packet(data, ts)
             if rec is not None:
