@@ -70,6 +70,24 @@ def label_windows(
     """Assign attack labels to each window."""
 
     labels: List[WindowLabels] = []
+    
+    # DEBUG: Print intervals and first window time
+    if windows:
+        first_w = windows[0]
+        print(f"[DEBUG_LABELS] Processing {len(windows)} windows.")
+        print(f"[DEBUG_LABELS] First Window: {first_w.start_time} - {first_w.end_time}")
+        print(f"[DEBUG_LABELS] First Window Date: {dt.datetime.fromtimestamp(first_w.start_time, tz=dt.timezone.utc)}")
+        
+        relevant_intervals = [i for i in intervals]
+        print(f"[DEBUG_LABELS] Loaded {len(relevant_intervals)} intervals.")
+        if relevant_intervals:
+            first_i = relevant_intervals[0]
+            print(f"[DEBUG_LABELS] First Interval: {first_i.start} - {first_i.end}")
+            print(f"[DEBUG_LABELS] First Interval Date: {dt.datetime.fromtimestamp(first_i.start, tz=dt.timezone.utc)}")
+            
+            diff = first_w.start_time - first_i.start
+            print(f"[DEBUG_LABELS] Diff (WinStart - IntStart): {diff:.2f} sec ({diff/3600:.4f} hrs)")
+
     for window in windows:
         family = config.default_family
         attack = 0
