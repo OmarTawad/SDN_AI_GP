@@ -62,9 +62,20 @@ class FeaturePipeline:
         
         intervals_csv = self.config.labels.intervals_csv
         intervals = []
-        if intervals_csv and Path(intervals_csv).exists():
-            intervals_map = load_attack_intervals(Path(intervals_csv), self.config.labels)
-            intervals = intervals_map.get(pcap_path.name, [])
+        if intervals_csv:
+            csv_path_obj = Path(intervals_csv)
+            if csv_path_obj.exists():
+                print(f"[PROCESSOR_DEBUG] Loading intervals from {csv_path_obj.absolute()}")
+                intervals_map = load_attack_intervals(csv_path_obj, self.config.labels)
+                print(f"[PROCESSOR_DEBUG] Map keys: {list(intervals_map.keys())}")
+                print(f"[PROCESSOR_DEBUG] Looking for key: '{pcap_path.name}'")
+                intervals = intervals_map.get(pcap_path.name, [])
+                if not intervals:
+                     print(f"[PROCESSOR_DEBUG] Key '{pcap_path.name}' NOT FOUND in map.")
+            else:
+                print(f"[PROCESSOR_DEBUG] CSV NOT FOUND at {csv_path_obj.absolute()}")
+        else:
+             print("[PROCESSOR_DEBUG] intervals_csv config is empty")
             
         t2 = time.perf_counter()
         
