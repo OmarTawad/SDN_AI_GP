@@ -71,19 +71,6 @@ def label_windows(
 
     labels: List[WindowLabels] = []
     
-    # DEBUG: Check alignment
-    if windows and len(windows) > 0:
-        w0 = windows[0]
-        print(f"[LABELS_DEBUG] First Window Start: {w0.start_time} ({dt.datetime.fromtimestamp(w0.start_time, tz=dt.timezone.utc)})")
-        
-        relevant = [i for i in intervals]
-        if relevant:
-            i0 = relevant[0]
-            print(f"[LABELS_DEBUG] First Label Interval: {i0.start} ({dt.datetime.fromtimestamp(i0.start, tz=dt.timezone.utc)})")
-            print(f"[LABELS_DEBUG] Diff: {w0.start_time - i0.start} sec")
-        else:
-            print("[LABELS_DEBUG] No intervals found for this file!")
-
     for window in windows:
         family = config.default_family
         attack = 0

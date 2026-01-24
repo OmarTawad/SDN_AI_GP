@@ -16,7 +16,7 @@ windowing:
   max_windows: 50000
 feature: {}
 labels:
-  intervals_csv: data/arp_attack_intervals.csv
+  intervals_csv: ../data/arp_attack_intervals.csv
   default_family: normal
   family_mapping:
     normal: 0
