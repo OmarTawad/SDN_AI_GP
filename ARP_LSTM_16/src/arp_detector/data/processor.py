@@ -114,10 +114,14 @@ class FeaturePipeline:
         frame.insert(0, "pcap", pcap_path.name)
         
         if intervals:
+            # DEBUG: Confirm we are labeling
+            print(f"[PROCESSOR_DEBUG] process_chunk: {len(intervals)} intervals found. Calling label_windows.")
             labs = label_windows(windows, intervals, self.config.labels)
             frame["attack"] = [x.attack for x in labs]
             frame["family"] = [x.family for x in labs]
         else:
+            # DEBUG: Warn if no labeling
+            print("[PROCESSOR_DEBUG] process_chunk: NO INTERVALS. Skipping labeling (all 0).")
             frame["attack"] = 0
             frame["family"] = self.config.labels.default_family
             
