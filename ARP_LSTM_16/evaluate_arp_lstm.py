@@ -114,14 +114,14 @@ def _load_model(config, checkpoint: Path, feature_columns: Sequence[str], device
             state = state[key]
     model.load_state_dict(state)
     
-    # Enforce float16 and CPU
-    return model.to(device=device, dtype=torch.float16).eval()
+    # Enforce float32 and CPU (16-bit crashes on CPU LSTM)
+    return model.to(device=device, dtype=torch.float32).eval()
 
 
 def _evaluate(model: SequenceClassifier, loader: DataLoader, device: torch.device, threshold: float):
     y_true, y_prob = [], []
-    # 16-bit inference
-    dtype = torch.float16
+    # 32-bit inference
+    dtype = torch.float32
     
     with torch.inference_mode():
         for batch in loader:

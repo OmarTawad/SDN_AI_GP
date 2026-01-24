@@ -48,10 +48,10 @@ class SupervisedTrainer:
         
         self.logger = get_logger(__name__)
         
-        # User Requirement: Ditch GPU, use only CPU, force 16-bit
+        # User Requirement: Ditch GPU, use only CPU, force 32-bit (since 16-bit crashes on CPU LSTM)
         self.device = torch.device("cpu")
-        self.torch_dtype = torch.float16
-        self.use_amp = False  # No AMP, pure manual 16-bit logic
+        self.torch_dtype = torch.float32
+        self.use_amp = False  # No AMP, pure manual logic
         self.loss_scale = LOSS_SCALE
         
         ensure_dir(config.paths.models_dir)
