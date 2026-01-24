@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-import argparse, torch
-from arp_detector.config import load_config
+import argparse, torch, os
+os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+os.environ["CUDA_VISIBLE_DEVICES"] = ""from arp_detector.config import load_config
 from arp_detector.utils.io import load_json
 from arp_detector.training.supervised_trainer import SupervisedTrainer
 

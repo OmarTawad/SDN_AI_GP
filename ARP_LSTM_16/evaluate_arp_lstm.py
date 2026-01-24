@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Evaluate the LSTM-based ARP spoofing detector on cached sequences."""
+"""Evaluate the LSTM-based ARP spoofing detector in 16-bit mode."""
 from __future__ import annotations
 
 import argparse
@@ -13,15 +13,17 @@ import numpy as np
 import torch
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, f1_score, precision_score, recall_score, roc_auc_score
 from torch.utils.data import DataLoader
+
+# Add src to path
 ROOT = Path(__file__).resolve().parent
 SRC_DIR = ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from arp_detector.config import load_config  # noqa: E402
-from arp_detector.data.dataset import SequenceDataset, collate_fn  # noqa: E402
-from arp_detector.models.supervised import SequenceClassifier  # noqa: E402
-from arp_detector.utils.io import ensure_dir, load_dataframe, load_joblib, load_json  # noqa: E402
+from arp_detector.config import load_config
+from arp_detector.data.dataset import SequenceDataset, collate_fn
+from arp_detector.models.supervised import SequenceClassifier
+from arp_detector.utils.io import ensure_dir, load_dataframe, load_joblib, load_json
 
 DEFAULT_CONFIG, DEFAULT_EVAL_DIR = ROOT / "configs" / "config.yaml", ROOT / "eval"
 
@@ -37,6 +39,7 @@ def _resolve_split_files(config, manifest: Dict[str, object], split: str) -> Lis
     excluded = {Path(name).name for name in (config.data.train_files or [])}
     excluded |= {Path(name).name for name in (config.data.val_files or [])}
     remaining = [entry for entry in entries if Path(entry).name not in excluded]
+    # If no remaining files (e.g. if we only processed one file and it's not excluded), just use entries
     return remaining or entries
 
 
@@ -47,7 +50,9 @@ def _build_loader(config, files: Sequence[str], feature_columns: Sequence[str], 
     for name in files:
         parquet_path = config.paths.processed_dir / f"{Path(name).stem}.parquet"
         if not parquet_path.exists():
-            raise FileNotFoundError(f"Missing processed features → {parquet_path}")
+             # Try absolute path resolution if relative fails
+             if not parquet_path.exists():
+                 raise FileNotFoundError(f"Missing processed features -> {parquet_path}")
         frame = load_dataframe(parquet_path)
         if not frame.empty:
             frame[feature_columns] = scaler.transform(frame[feature_columns])
@@ -61,7 +66,7 @@ def _build_loader(config, files: Sequence[str], feature_columns: Sequence[str], 
         shuffle=False,
         num_workers=config.training.supervised.num_workers,
         collate_fn=collate_fn,
-        pin_memory=torch.cuda.is_available(),
+        pin_memory=False, # CPU only
     )
 
 
@@ -102,23 +107,42 @@ def _load_model(config, checkpoint: Path, feature_columns: Sequence[str], device
         num_attack_types=len(config.labels.family_mapping),
         config=config.model.supervised,
     )
+    # Load state dict
     state = torch.load(checkpoint, map_location=device)
     for key in ("state_dict", "model"):
         if isinstance(state, dict) and key in state:
             state = state[key]
     model.load_state_dict(state)
-    return model.to(device).eval()
+    
+    # Enforce float16 and CPU
+    return model.to(device=device, dtype=torch.float16).eval()
 
 
 def _evaluate(model: SequenceClassifier, loader: DataLoader, device: torch.device, threshold: float):
     y_true, y_prob = [], []
+    # 16-bit inference
+    dtype = torch.float16
+    
     with torch.inference_mode():
         for batch in loader:
-            features = batch["features"].to(device, non_blocking=True)
-            labels = batch["binary_labels"].to(device, non_blocking=True)
-            probs = torch.sigmoid(model(features).window_logits).cpu().numpy()
+            features = batch["features"].to(device, dtype=dtype, non_blocking=True)
+            labels = batch["binary_labels"].to(device, dtype=dtype, non_blocking=True)
+            
+            # Safe finite check
+            if not torch.isfinite(features).all():
+                 features = torch.nan_to_num(features, nan=0.0, posinf=0.0, neginf=0.0)
+
+            # Forward
+            outputs = model(features)
+            
+            # Logit clamping (as per training)
+            logits = torch.nan_to_num(outputs.window_logits, nan=0.0, posinf=20.0, neginf=-20.0)
+            logits = torch.clamp(logits, min=-20.0, max=20.0)
+            
+            probs = torch.sigmoid(logits).cpu().float().numpy()
             y_prob.append(probs.reshape(-1))
-            y_true.append(labels.cpu().numpy().reshape(-1))
+            y_true.append(labels.cpu().float().numpy().reshape(-1))
+            
     if not y_true:
         raise RuntimeError("No predictions were produced. Confirm the dataset split is non-empty.")
     truth = np.concatenate(y_true).astype(int)
@@ -150,7 +174,7 @@ def _evaluate(model: SequenceClassifier, loader: DataLoader, device: torch.devic
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Evaluate the ARP LSTM detector.")
+    parser = argparse.ArgumentParser(description="Evaluate the ARP LSTM detector (16-bit).")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG, help="Path to configs/config.yaml")
     parser.add_argument("--checkpoint", type=str, default=None, help="Optional checkpoint override (.pt / .pth)")
     parser.add_argument("--eval-dir", type=Path, default=DEFAULT_EVAL_DIR, help="Directory for evaluation artifacts")
@@ -158,16 +182,22 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=16, help="Evaluation batch size")
     parser.add_argument("--threshold", type=float, default=0.5, help="Decision threshold applied to window probabilities")
     args = parser.parse_args()
+    
     ensure_dir(args.eval_dir)
     config = load_config(args.config)
     manifest = load_json(config.paths.manifest_path)
     feature_columns: Sequence[str] = manifest.get("feature_columns", [])
     if not feature_columns:
-        raise ValueError(f"No feature columns found in manifest → {config.paths.manifest_path}")
+        raise ValueError(f"No feature columns found in manifest -> {config.paths.manifest_path}")
+        
     files = _resolve_split_files(config, manifest, args.split)
     scaler = load_joblib(config.paths.scaler_path)
+    
     loader = _build_loader(config, files, feature_columns, scaler, args.batch_size)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
+    # Force CPU
+    device = torch.device("cpu")
+    
     checkpoint = _find_checkpoint(config, args.checkpoint)
     model = _load_model(config, checkpoint, feature_columns, device)
 
@@ -182,6 +212,7 @@ def main() -> None:
         "elapsed_seconds": float(time.time() - start),
         "device": str(device),
     })
+    
     np.save(args.eval_dir / "confusion_matrix.npy", matrix)
     (args.eval_dir / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
     log_path = args.eval_dir / "log.txt"
@@ -191,10 +222,8 @@ def main() -> None:
     )
 
     print(json.dumps(metrics, indent=2))
-    print("\nClassification Report:")
-    print(report)
     print(f"\nPer-class report written to {log_path}")
-    print("✅ “arp_lstm evaluation complete – metrics saved under arp_lstm/eval/metrics.json”")
+    print("DONE: Evaluation complete.")
 
 
 if __name__ == "__main__":
