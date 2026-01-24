@@ -5,7 +5,7 @@ import glob
 from pathlib import Path
 
 # Ensure src is in python path if running locally without install
-sys.path.append(str(Path(__file__).resolve().parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from arp_detector.config import load_config
 from arp_detector.data.processor import FeaturePipeline
