@@ -142,20 +142,7 @@ def read_pcap(path: Path, limit: Optional[int] = None, byte_limit: Optional[int]
         
         accumulated_bytes = 0
         for index, (data, meta) in it:
-            if index == 0:
-                raw_debug_ts = _timestamp_from_meta(meta)
-                raise RuntimeError(f"DEBUG_TIMESTAMP_CHECK: {raw_debug_ts}")
-                
-            if limit is not None and index >= limit:
-                break
-            
-            if byte_limit is not None:
-                accumulated_bytes += len(data)
-                if accumulated_bytes > byte_limit:
-                    break
-            
             ts = _timestamp_from_meta(meta)
-            ts -= 14400.0 # FIX: Correct 4-hour timezone offset
             
             rec = _decode_packet(data, ts)
             if rec is not None:
