@@ -35,6 +35,12 @@ class FeaturePipeline:
 
         t0 = time.perf_counter()
         packets = read_pcap(pcap_path, limit=env_limit if env_limit is not None else limit, byte_limit=byte_limit)
+        
+        # FIX: Subtract 4 hours (14400 seconds) from all packet timestamps
+        # This addresses the issue where data appears "4 hours ahead" due to timezone mismatch.
+        for pkt in packets:
+            pkt.timestamp -= 14400.0
+            
         t1 = time.perf_counter()
 
         builder = WindowBuilder(WindowingParams(
