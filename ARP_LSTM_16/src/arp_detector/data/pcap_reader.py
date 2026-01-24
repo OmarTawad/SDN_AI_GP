@@ -6,16 +6,7 @@ from pathlib import Path
 from typing import Iterator, List, Optional
 import shutil, subprocess
 
-# Avoid interface discovery that requires elevated permissions; we only need offline PCAP parsing.
-import scapy.config
-from types import SimpleNamespace
-from scapy.config import conf
 
-scapy.config._set_conf_sockets = lambda: None  # type: ignore[assignment]
-if getattr(conf, "ifaces", None) is None:
-    conf.ifaces = SimpleNamespace(reload=lambda *args, **kwargs: None)
-else:
-    conf.ifaces.reload = lambda *args, **kwargs: None  # type: ignore[assignment]
 
 from scapy.all import ARP, ICMP, IP, IPv6, RawPcapReader, TCP, UDP, Ether
 from ..utils.progress import progress
