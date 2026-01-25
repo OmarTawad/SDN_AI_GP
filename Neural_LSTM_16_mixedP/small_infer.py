@@ -200,6 +200,17 @@ def main() -> None:
         if len(feature_columns) > expected_cols:
             print(f"Warning: extracted {len(feature_columns)} features; truncating to {expected_cols} to match the checkpoint.")
             feature_columns = feature_columns[:expected_cols]
+            
+            # Truncate scaler to match feature columns
+            if hasattr(scaler, "n_features_in_") and scaler.n_features_in_ > expected_cols:
+                print(f"Warning: Scaler expects {scaler.n_features_in_} features but got {expected_cols}. Falling back to fitted scaling.")
+                scaler.n_features_in_ = expected_cols
+                if hasattr(scaler, "mean_") and scaler.mean_ is not None:
+                    scaler.mean_ = scaler.mean_[:expected_cols]
+                if hasattr(scaler, "scale_") and scaler.scale_ is not None:
+                    scaler.scale_ = scaler.scale_[:expected_cols]
+                if hasattr(scaler, "var_") and scaler.var_ is not None:
+                    scaler.var_ = scaler.var_[:expected_cols]
 
     model = _load_model(cfg, feature_columns, device, torch_dtype, state)
     
