@@ -88,10 +88,10 @@ def _infer_window(
     prob_t = torch.sigmoid(logit_T)
     logit = float(logit_T.float().item())
     prob = float(prob_t.item())
-        attn_peak_bin = None
-        if attn is not None:
-            attn_arr = attn.cpu().numpy().ravel()
-            attn_peak_bin = int(np.argmax(attn_arr))
+    attn_peak_bin = None
+    if attn is not None:
+        attn_arr = attn.cpu().numpy().ravel()
+        attn_peak_bin = int(np.argmax(attn_arr))
 
     label = "attack" if prob >= tau else "normal"
 
