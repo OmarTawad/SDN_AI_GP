@@ -136,6 +136,7 @@ def infer_windows(
         t0, t1, win_rows, bin_idx = win
         if not win_rows:
             continue
+        win_start = time.perf_counter()
         result = _infer_window(
             (t0, t1, win_rows, bin_idx),
             cfg,
@@ -149,6 +150,7 @@ def infer_windows(
             micro_bins,
             device,
         )
+        result["inference_time_sec"] = round(time.perf_counter() - win_start, 6)
         results.append(result)
 
     if not results:
@@ -221,7 +223,6 @@ def main() -> None:
             pcap_path, cfg, model, scaler, slimmer, meta, T, tau, window_sec, micro_bins, device
         )
         result["pcap"] = os.path.abspath(pcap_path)
-        result["inference_time_sec"] = round(time.perf_counter() - start, 6)
         colored_label = _color_label(result["label"])
         print(
             f"[{os.path.basename(pcap_path)}] label={colored_label} prob={result['prob']} "
@@ -239,7 +240,7 @@ def main() -> None:
             colored_label = _color_label(win["label"])
             print(
                 f"[{os.path.basename(pcap_path)}] window={idx}/{len(windows)} label={colored_label} "
-                f"prob={win['prob']} packets={win['packets_in_window']} "
+                f"prob={win['prob']} time={win['inference_time_sec']}s packets={win['packets_in_window']} "
                 f"window={win['window_start_iso']} -> {win['window_end_iso']} attn_peak_bin={win['attn_peak_bin']}"
             )
         payload = {

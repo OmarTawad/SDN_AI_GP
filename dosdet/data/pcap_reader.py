@@ -11,18 +11,12 @@ def iter_rows_from_pcap(
     pcap_path: str,
     ssdp_multicast_v4: str = "239.255.255.250",
     ssdp_multicast_v6: str = "ff02::c",
-<<<<<<< HEAD
-=======
     byte_limit: int | None = None,
->>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
 ) -> Iterator[Dict]:
     """
     Stream-normalize packets from a pcap file into dict rows.
     """
 <<<<<<< HEAD
-    with PcapReader(pcap_path) as reader:
-        for pkt in reader:
-=======
     accumulated_bytes = 0
     with PcapReader(pcap_path) as reader:
         for pkt in reader:
@@ -30,7 +24,6 @@ def iter_rows_from_pcap(
                 accumulated_bytes += len(pkt)
                 if accumulated_bytes > byte_limit:
                     break
->>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
             try:
                 row = scapy_pkt_to_row(pkt, ssdp_multicast_v4, ssdp_multicast_v6)
                 yield row
