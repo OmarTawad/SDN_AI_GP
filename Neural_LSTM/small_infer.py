@@ -18,6 +18,7 @@ os.environ.setdefault("OPENBLAS_NUM_THREADS", "2")
 os.environ.setdefault("MKL_NUM_THREADS", "2")
 os.environ.setdefault("NUMEXPR_NUM_THREADS", "2")
 os.environ.setdefault("TORCH_CPP_LOG_LEVEL", "ERROR")
+os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
 
 # Ensure local package is importable when running the script directly
 ROOT = Path(__file__).resolve().parent
@@ -27,6 +28,10 @@ if str(SRC) not in sys.path:
 
 import numpy as np
 import torch
+try:
+    from sklearn.preprocessing import StandardScaler
+except ImportError:  # pragma: no cover - fallback when sklearn isn't available
+    StandardScaler = None
 
 from dos_detector.config import load_config
 from dos_detector.data.pcap_reader import iter_pcap
@@ -50,6 +55,35 @@ def _color_label(label: str) -> str:
     if label == "normal":
         return f"\033[32m{label}\033[0m"
     return label
+
+
+def _resolve_feature_columns(manifest_path: Path, frame_columns: Sequence[str]) -> Sequence[str]:
+    if manifest_path.is_file():
+        manifest = load_json(manifest_path)
+        feature_columns = manifest.get("feature_columns") or []
+        if feature_columns:
+            return feature_columns
+
+    reserved = {"window_index", "window_start", "window_end"}
+    inferred = [name for name in frame_columns if name not in reserved]
+    if not inferred:
+        raise ValueError("Unable to infer feature columns; manifest missing and frame has no features.")
+    return inferred
+
+
+def _scale_features(feature_matrix: np.ndarray, scaler_path: Path) -> tuple[np.ndarray, str]:
+    if scaler_path.is_file():
+        scaler = load_joblib(scaler_path)
+        scaled = scaler.transform(feature_matrix).astype(np.float32, copy=False)
+        return scaled, "loaded"
+
+    if StandardScaler is None:
+        scaled = feature_matrix.astype(np.float32, copy=False)
+        return scaled, "identity"
+
+    scaler = StandardScaler()
+    scaled = scaler.fit_transform(feature_matrix).astype(np.float32, copy=False)
+    return scaled, "fitted"
 
 
 def _load_model(cfg, feature_columns: Sequence[str], device: torch.device) -> SequenceClassifier:
@@ -141,11 +175,15 @@ def infer_windows(
         [[float(row.get(name, 0.0)) for name in feature_columns] for row in rows[: len(windows)]],
         dtype=np.float32,
     )
-    scaled = scaler.transform(feature_matrix).astype(np.float32, copy=False)
+    if scaler is None:
+        scaled = feature_matrix.astype(np.float32, copy=False)
+    else:
+        scaled = scaler.transform(feature_matrix).astype(np.float32, copy=False)
 
     tensor = torch.from_numpy(scaled).to(device)
     tensor = tensor.unsqueeze(0)  # (batch=1, seq=len(windows), features)
 
+    infer_start = time.perf_counter()
     with torch.no_grad():
         outputs = model(tensor)
         logits = outputs.window_logits[0].detach().cpu().numpy().ravel()
@@ -154,6 +192,7 @@ def infer_windows(
         if outputs.attention is not None:
             weights = outputs.attention[0].detach().cpu().numpy().ravel()
             attn_peak = int(np.argmax(weights)) if weights.size else None
+    per_window_time = (time.perf_counter() - infer_start) / max(1, len(windows))
 
     threshold = float(cfg.postprocessing.tau_window)
     results: list[Dict[str, Any]] = []
@@ -175,6 +214,7 @@ def infer_windows(
                 "window_sec": float(window_sec),
                 "micro_bins": int(cfg.feature.micro_bins),
                 "attention_peak_step": attn_peak,
+                "inference_time_sec": round(per_window_time, 6),
             }
         )
 
@@ -226,18 +266,77 @@ def main() -> None:
     if not feature_columns:
         raise ValueError(f"Manifest missing feature_columns → {cfg.paths.manifest_path}")
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cpu")
     configure_cpu_environment(threads=2, interop_threads=1)
-    scaler = load_joblib(cfg.paths.scaler_path)
-    model = _load_model(cfg, feature_columns, device)
 
-    start = time.perf_counter()
     window_sec = float(args.window_sec if args.window_sec is not None else cfg.windowing.window_size)
     num_windows = max(1, int(args.num_windows))
+
+    extractor = FeatureExtractor(cfg.feature, window_sec)
+    windows: list[Window] = []
+    for window in _iter_windows(args.pcap, window_sec, window_sec):
+        if not window.packets:
+            continue
+        windows.append(window)
+        if len(windows) >= num_windows:
+            break
+    if not windows:
+        raise ValueError(f"No packets found in {args.pcap}")
+
+    frame = extractor.extract(windows)
+    if frame.empty:
+        raise ValueError("Feature frame is empty for inferred windows.")
+
+    feature_columns = _resolve_feature_columns(cfg.paths.manifest_path, frame.columns)
+    feature_matrix = frame.loc[:, feature_columns].to_numpy(dtype=np.float32, copy=True)
+    scaled, scaler_source = _scale_features(feature_matrix, cfg.paths.scaler_path)
+    if scaler_source != "loaded":
+        print(
+            f"Warning: scaler missing at {cfg.paths.scaler_path}, using {scaler_source} scaling.",
+            file=sys.stderr,
+        )
+
+    model = _load_model(cfg, feature_columns, device)
+    tensor = torch.from_numpy(scaled).to(device).unsqueeze(0)
+
+    infer_start = time.perf_counter()
+    with torch.no_grad():
+        outputs = model(tensor)
+        logits = outputs.window_logits[0].detach().cpu().numpy().ravel()
+        probs = torch.sigmoid(outputs.window_logits)[0].detach().cpu().numpy().ravel()
+        attn_peak = None
+        if outputs.attention is not None:
+            weights = outputs.attention[0].detach().cpu().numpy().ravel()
+            attn_peak = int(np.argmax(weights)) if weights.size else None
+    per_window_time = (time.perf_counter() - infer_start) / max(1, len(windows))
+
+    results: list[Dict[str, Any]] = []
+    threshold = float(cfg.postprocessing.tau_window)
+    for idx, window in enumerate(windows):
+        prob = float(probs[idx])
+        logit = float(logits[idx])
+        label = "attack" if prob >= threshold else "normal"
+        results.append(
+            {
+                "window_start": float(window.start_time),
+                "window_end": float(window.end_time),
+                "window_start_iso": _iso(float(window.start_time)),
+                "window_end_iso": _iso(float(window.end_time)),
+                "packets_in_window": len(window.packets),
+                "prob": round(prob, 6),
+                "logit": round(logit, 6),
+                "label": label,
+                "threshold": threshold,
+                "window_sec": float(window_sec),
+                "micro_bins": int(cfg.feature.micro_bins),
+                "attention_peak_step": attn_peak,
+                "inference_time_sec": round(per_window_time, 6),
+            }
+        )
+
     if num_windows == 1:
-        result = infer_first_window(args.pcap, cfg, feature_columns, model, scaler, device, window_sec)
+        result = results[0]
         result["pcap"] = str(args.pcap.resolve())
-        result["inference_time_sec"] = round(time.perf_counter() - start, 6)
 
         colored_label = _color_label(result["label"])
         print(
@@ -248,24 +347,21 @@ def main() -> None:
         payload = result
         suffix = "single_window"
     else:
-        windows = infer_windows(args.pcap, cfg, feature_columns, model, scaler, device, window_sec, num_windows)
-        total_time = round(time.perf_counter() - start, 6)
-        for idx, win in enumerate(windows, start=1):
+        for idx, win in enumerate(results, start=1):
             colored_label = _color_label(win["label"])
             print(
                 f"[{args.pcap.name}] window={idx}/{len(windows)} label={colored_label} "
-                f"prob={win['prob']} packets={win['packets_in_window']} "
+                f"prob={win['prob']} time={win['inference_time_sec']}s packets={win['packets_in_window']} "
                 f"window={win['window_start_iso']} -> {win['window_end_iso']} attn_step={win['attention_peak_step']}"
             )
         payload = {
             "pcap": str(args.pcap.resolve()),
             "num_windows_requested": num_windows,
-            "num_windows_inferred": len(windows),
+            "num_windows_inferred": len(results),
             "window_sec": window_sec,
             "micro_bins": int(cfg.feature.micro_bins),
             "threshold": float(cfg.postprocessing.tau_window),
-            "total_inference_time_sec": total_time,
-            "windows": windows,
+            "windows": results,
         }
         suffix = f"first_{num_windows}_windows"
 
