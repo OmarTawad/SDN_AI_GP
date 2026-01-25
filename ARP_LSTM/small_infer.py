@@ -351,6 +351,7 @@ def main() -> None:
                 f"arp_packets={win['arp_packets']} attn_weight={attn_info} "
                 f"window={win['window_start_iso']} -> {win['window_end_iso']}"
             )
+        print(f"[{args.pcap.name}] total_inference_time_sec={total_time}")
         payload = {
             "pcap": str(args.pcap.resolve()),
             "num_windows_requested": num_windows,
