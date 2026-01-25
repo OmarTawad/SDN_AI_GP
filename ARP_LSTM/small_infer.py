@@ -108,7 +108,14 @@ def _collect_windows(
     hop_sec: float,
     num_windows: int,
 ) -> list[Window]:
-    packets = list(iter_pcap(pcap_path))
+    packets = []
+    end_ts_needed = None
+    for pkt in iter_pcap(pcap_path):
+        if end_ts_needed is None:
+            end_ts_needed = float(pkt.timestamp) + window_sec + hop_sec * max(0, num_windows - 1)
+        if end_ts_needed is not None and float(pkt.timestamp) >= end_ts_needed:
+            break
+        packets.append(pkt)
     if not packets:
         raise ValueError(f"No packets found in {pcap_path}")
     builder = WindowBuilder(WindowingParams(window_size=window_sec, hop_size=hop_sec))
