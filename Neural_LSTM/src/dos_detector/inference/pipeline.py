@@ -11,10 +11,6 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 import pandas as pd
 import torch
-<<<<<<< HEAD
-import torch.nn.functional as F
-=======
->>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
 from torch.utils.data import DataLoader
 
 from ..config import Config
@@ -22,11 +18,7 @@ from ..data.dataset import SequenceDataset, collate_fn
 from ..data.pcap_reader import PCAPMetadata
 from ..data.processor import FeaturePipeline
 from ..models.supervised import SequenceClassifier
-<<<<<<< HEAD
-from ..utils.io import load_dataframe, load_joblib, load_json
-=======
 from ..utils.io import load_dataframe, load_joblib, load_json, resolve_processed_frame
->>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
 from ..utils.logging import configure_logging, get_logger
 from ..utils.seed import seed_everything
 from .postprocessing import DecisionGate
@@ -47,10 +39,6 @@ class InferencePipeline:
         if not self.feature_columns:
             raise ValueError("Feature manifest missing. Run extract-features first.")
         self.family_mapping = config.labels.family_mapping
-<<<<<<< HEAD
-        self.index_to_family = {index: name for name, index in self.family_mapping.items()}
-=======
->>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
         self.supervised_model = self._load_supervised_model()
         self.scaler = load_joblib(config.paths.scaler_path)
         self.gate = DecisionGate(config.postprocessing)
@@ -122,12 +110,6 @@ class InferencePipeline:
             }
         host_maps = host_maps or {"macs": {}, "ips": {}}
         features_supervised = frame.copy()
-<<<<<<< HEAD
-        features_supervised[self.feature_columns] = self.scaler.transform(frame[self.feature_columns])
-
-        sup_dataset = SequenceDataset([features_supervised], self.feature_columns, self.family_mapping, self.config.windowing)
-        sup_loader = DataLoader(sup_dataset, batch_size=1, shuffle=False, collate_fn=collate_fn, num_workers=2, pin_memory=True, prefetch_factor=4, persistent_workers=True)
-=======
         feature_block = frame[self.feature_columns].to_numpy(dtype=np.float32, copy=True)
         scaled_block = self.scaler.transform(feature_block).astype(np.float32, copy=False)
         features_supervised[self.feature_columns] = scaled_block
@@ -143,7 +125,6 @@ class InferencePipeline:
             prefetch_factor=4,
             persistent_workers=True,
         )
->>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
 
         window_store = self._run_supervised(frame, sup_loader)
         window_results = self._assemble_results(frame, window_store)
@@ -157,11 +138,7 @@ class InferencePipeline:
             for entry in window_results
         ]
         decisions, file_attack = self.gate.apply(gate_input)
-<<<<<<< HEAD
-        final_family = self._dominant_family(decisions)
-=======
         final_family = "attack" if file_attack else "normal"
->>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
         explanation = {}
         if window_results:
             top_window = max(window_results, key=lambda item: item["fused_score"])
@@ -215,10 +192,6 @@ class InferencePipeline:
                 features = batch["features"].to(self.device)
                 outputs = self.supervised_model(features)
                 probs = torch.sigmoid(outputs.window_logits).cpu().numpy()
-<<<<<<< HEAD
-                type_logits = F.softmax(outputs.type_logits, dim=-1).cpu().numpy()
-=======
->>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
                 for i, meta in enumerate(batch["metadata"]):
                     start_index = meta["start_index"]
                     end_index = meta["end_index"]
@@ -227,20 +200,12 @@ class InferencePipeline:
                             window_index,
                             {
                                 "supervised": [],
-<<<<<<< HEAD
-                                "type_probs": [],
-=======
->>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
                                 "features": raw_frame[self.feature_columns].iloc[window_index].to_dict(),
                                 "start": float(raw_frame["window_start"].iloc[window_index]),
                                 "end": float(raw_frame["window_end"].iloc[window_index]),
                             },
                         )
                         info["supervised"].append(float(probs[i, offset]))
-<<<<<<< HEAD
-                        info["type_probs"].append(type_logits[i, offset])
-=======
->>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
         return window_store
 
     def _assemble_results(self, raw_frame: pd.DataFrame, window_store: Dict[int, Dict[str, object]]) -> List[Dict[str, object]]:
@@ -248,16 +213,7 @@ class InferencePipeline:
         for index in sorted(window_store.keys()):
             info = window_store[index]
             supervised_prob = float(np.mean(info.get("supervised", [0.0])))
-<<<<<<< HEAD
-            type_probs = np.mean(np.array(info.get("type_probs", [[0.0] * len(self.family_mapping)])), axis=0)
-            if np.isnan(type_probs).any():
-                type_probs = np.zeros(len(self.family_mapping))
-                type_probs[0] = 1.0
-            family_index = int(np.argmax(type_probs)) if type_probs.size else 0
-            family_name = self.index_to_family.get(family_index, "normal")
-=======
             family_name = "attack" if supervised_prob >= self.config.postprocessing.tau_window else "normal"
->>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
             ae_error = 0.0
             ae_anomaly = 0.0
             fused = supervised_prob
@@ -276,18 +232,6 @@ class InferencePipeline:
             )
         return results
 
-<<<<<<< HEAD
-    def _dominant_family(self, decisions: Sequence) -> str:
-        counts = defaultdict(int)
-        for decision in decisions:
-            if decision.is_attack:
-                counts[decision.family] += 1
-        if not counts:
-            return "normal"
-        return max(counts.items(), key=lambda item: item[1])[0]
-
-=======
->>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
     def _explain_sequence(self, dataset: SequenceDataset, window_index: int) -> Dict[str, object]:
         top_k = self.config.explainability.top_features
         for sample in dataset.samples:
@@ -300,11 +244,7 @@ class InferencePipeline:
                 tensor.requires_grad_(True)
                 self.supervised_model.zero_grad(set_to_none=True)
                 outputs = self.supervised_model(tensor)
-<<<<<<< HEAD
-                score = torch.sigmoid(outputs.file_logits)
-=======
                 score = outputs.sequence_prob
->>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
                 score.backward()
                 gradients = tensor.grad.abs().squeeze(0)
                 feature_scores = gradients.mean(dim=0).cpu().numpy()
@@ -326,14 +266,9 @@ class InferencePipeline:
         processed_dir = getattr(self.config.paths, "processed_dir", None)
         if processed_dir is None:
             return None
-<<<<<<< HEAD
-        feature_path = Path(processed_dir) / f"{path.stem}.parquet"
-        if not feature_path.exists():
-=======
         try:
             feature_path = resolve_processed_frame(processed_dir, path.name)
         except FileNotFoundError:
->>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
             return None
         frame = load_dataframe(feature_path)
         host_maps = self.feature_pipeline.load_host_maps(path)

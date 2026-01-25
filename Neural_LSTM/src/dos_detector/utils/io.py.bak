@@ -38,10 +38,7 @@ def save_json(path: Path, payload: Dict[str, Any]) -> None:
 def load_json(path: Path) -> Dict[str, Any]:
     """Load a JSON dictionary."""
 
-<<<<<<< HEAD
-=======
     path = Path(path).resolve()
->>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
     with path.open("r", encoding="utf-8") as handle:
         return json.load(handle)
 

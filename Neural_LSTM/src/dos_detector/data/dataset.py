@@ -3,24 +3,14 @@
 
 from __future__ import annotations
 
-<<<<<<< HEAD
-from typing import Dict, List, Sequence
-=======
 import gc
 import random
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Sequence
->>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
 
 import numpy as np
 import pandas as pd
 import torch
-<<<<<<< HEAD
-from torch.utils.data import Dataset
-
-from ..config.types import WindowingConfig
-from .structures import SequenceSample
-=======
 from torch.utils.data import Dataset, IterableDataset, get_worker_info
 
 from ..config.types import WindowingConfig
@@ -29,7 +19,6 @@ from ..utils.io import resolve_processed_frame, stream_dataframe
 
 DEFAULT_CHUNK_SIZE = 50_000
 META_COLUMNS = ["attack", "family", "window_index", "window_start", "window_end", "pcap"]
->>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
 
 
 def _build_sequence_samples(
@@ -120,10 +109,6 @@ class SequenceDataset(Dataset[Dict[str, torch.Tensor]]):
             "features": features,
             "binary_labels": binary,
             "family_labels": family,
-<<<<<<< HEAD
-            "metadata": sample.metadata,
-        }
-=======
         "metadata": sample.metadata,
     }
 
@@ -221,7 +206,6 @@ class StreamingSequenceDataset(IterableDataset[Dict[str, Any]]):
             buffer = chunk.iloc[start:].copy()
             del chunk
             gc.collect()
->>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
 
 
 def filter_normal_sequences(samples: Sequence[SequenceSample]) -> List[SequenceSample]:
@@ -233,11 +217,6 @@ def filter_normal_sequences(samples: Sequence[SequenceSample]) -> List[SequenceS
 def collate_fn(batch: Sequence[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
     """Collate function for DataLoader."""
 
-<<<<<<< HEAD
-    features = torch.stack([item["features"] for item in batch], dim=0)
-    binary = torch.stack([item["binary_labels"] for item in batch], dim=0)
-    family = torch.stack([item["family_labels"] for item in batch], dim=0)
-=======
     def _to_tensor(value, dtype):
         if torch.is_tensor(value):
             return value.to(dtype=dtype)
@@ -246,7 +225,6 @@ def collate_fn(batch: Sequence[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tens
     features = torch.stack([_to_tensor(item["features"], torch.float32) for item in batch], dim=0)
     binary = torch.stack([_to_tensor(item["binary_labels"], torch.float32) for item in batch], dim=0)
     family = torch.stack([_to_tensor(item["family_labels"], torch.long) for item in batch], dim=0)
->>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
     return {
         "features": features,
         "binary_labels": binary,
@@ -255,8 +233,4 @@ def collate_fn(batch: Sequence[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tens
     }
 
 
-<<<<<<< HEAD
-__all__ = ["SequenceDataset", "collate_fn", "filter_normal_sequences"]
-=======
 __all__ = ["SequenceDataset", "StreamingSequenceDataset", "collate_fn", "filter_normal_sequences"]
->>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7

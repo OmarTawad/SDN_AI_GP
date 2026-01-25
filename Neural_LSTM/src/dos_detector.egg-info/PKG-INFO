@@ -1,33 +1,6 @@
 Metadata-Version: 2.4
 Name: dos-detector
 Version: 0.1.0
-<<<<<<< HEAD
-Summary: PCAP-based DoS detector using sequence models
-Author-email: SDN AI GP <maintainer@example.com>
-Requires-Python: >=3.10
-Requires-Dist: numpy>=1.26
-Requires-Dist: pandas>=2.0
-Requires-Dist: scipy>=1.11
-Requires-Dist: scikit-learn>=1.4
-Requires-Dist: torch>=2.2
-Requires-Dist: typer[all]>=0.9
-Requires-Dist: pyyaml>=6.0.1
-Requires-Dist: structlog>=23.1
-Requires-Dist: tqdm>=4.66
-Requires-Dist: joblib>=1.2
-Requires-Dist: matplotlib>=3.8
-Requires-Dist: seaborn>=0.12
-Requires-Dist: shap>=0.41
-Requires-Dist: scapy>=2.5.0
-Requires-Dist: pyshark>=0.6
-Requires-Dist: pyarrow>=16.0.0
-Requires-Dist: python-dateutil>=2.9
-Provides-Extra: dev
-Requires-Dist: black>=23.0; extra == "dev"
-Requires-Dist: ruff>=0.1.5; extra == "dev"
-Requires-Dist: pytest>=7.3; extra == "dev"
-Requires-Dist: pytest-cov>=4.0; extra == "dev"
-=======
 Summary: CPU-optimized LSTM-based DoS detector
 Author: SDN AI Team
 Requires-Python: >=3.10
@@ -133,4 +106,3 @@ Regression tests cover feature extraction, training, and host attribution to ens
 - MAC and IP statistics are derived from source fields per inference window and weighted by the supervised attack probability. Windows that pass the decision gate contribute additional weight, ensuring confirmed attack activity dominates the ranking.
 - When no MAC/IP surpasses the attack threshold, the algorithm still reports the highest-scoring talkers to aid manual triage.
 - All values in `host_activity` are JSON-friendly, enabling downstream tooling to consume the enriched telemetry directly.
->>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
