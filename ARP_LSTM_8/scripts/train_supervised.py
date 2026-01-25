@@ -1,6 +1,10 @@
 import sys
 import argparse
 import torch
+import os
+os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+os.environ["CUDA_VISIBLE_DEVICES"] = ""
+
 from pathlib import Path
 # Ensure src is in python path if running locally without install
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
