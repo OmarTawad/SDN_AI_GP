@@ -57,13 +57,13 @@ def _load_model(
     feature_columns: Sequence[str],
     device: torch.device,
     torch_dtype: torch.dtype,
+    state: Dict[str, Any],
 ) -> SequenceClassifier:
     model = SequenceClassifier(
         input_size=len(feature_columns),
         num_attack_types=len(cfg.labels.family_mapping),
         config=cfg.model.supervised,
     ).to(device=device, dtype=torch_dtype or DEFAULT_TORCH_DTYPE)
-    state = torch.load(cfg.paths.supervised_model_path, map_location=device)
     model.load_state_dict(state)
     model.eval()
     return model
@@ -189,7 +189,19 @@ def main() -> None:
     scaler = load_joblib(cfg.paths.scaler_path)
     torch_dtype, numpy_dtype = resolve_precision_mode(getattr(cfg.training.supervised, "precision_mode", None))
     torch_dtype = resolve_torch_dtype(device, torch_dtype)
-    model = _load_model(cfg, feature_columns, device, torch_dtype)
+
+    # Load state dict and check for feature dimension mismatch
+    state = torch.load(cfg.paths.supervised_model_path, map_location=device)
+    
+    # Heuristic: check first layer weight size to determine expected input size
+    # LSTM/GRU weight_ih_l0 shape is (hidden_size * X, input_size)
+    if "rnn.weight_ih_l0" in state:
+        expected_cols = state["rnn.weight_ih_l0"].shape[1]
+        if len(feature_columns) > expected_cols:
+            print(f"Warning: extracted {len(feature_columns)} features; truncating to {expected_cols} to match the checkpoint.")
+            feature_columns = feature_columns[:expected_cols]
+
+    model = _load_model(cfg, feature_columns, device, torch_dtype, state)
     
     extractor = FeatureExtractor(cfg.feature, cfg.windowing.window_size)
     window_gen = _iter_windows(args.pcap, cfg.windowing.window_size, args.num_windows)
