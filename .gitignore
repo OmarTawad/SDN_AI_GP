@@ -1,3 +1,6 @@
+<<<<<<< HEAD
+*.venv
+=======
 # ---- big generated artifacts ----
 **/cache/
 **/cache/**
@@ -10,6 +13,7 @@
 **/reports_home/**
 
 # pcaps / datasets / samples
+>>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
 *.pcap
 *.pcapng
 **/samples/
@@ -25,6 +29,22 @@
 
 # python junk
 __pycache__/
+<<<<<<< HEAD
+*.py[cod]
+*ryu_env
+*reports/
+*reports_loose
+*reports_home
+reports/**
+!reports/.gitkeep
+*reports_loose
+*.pcap
+!pcaps/*.pcap
+!models/.gitkeep
+!data/processed/.gitkeep
+*processed
+*release
+=======
 *.pyc
 *.venv/
 *venv/
@@ -49,3 +69,11 @@ venv/
 
 *.csv
 
+>>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
+
+# virtualenvs
+ryu_env/
+venv/
+.env/
+__pycache__/
+*.pyc

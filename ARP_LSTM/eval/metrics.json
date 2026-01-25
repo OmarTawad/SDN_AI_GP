@@ -1,13 +1,13 @@
 {
-  "accuracy": 1.0,
-  "precision": 0.0,
-  "recall": 0.0,
-  "f1": 0.0,
+  "accuracy": 0.9977844112769486,
+  "precision": 0.34763948497854075,
+  "recall": 0.30798479087452474,
+  "f1": 0.32661290322580644,
   "threshold": 0.5,
-  "samples": 151320,
-  "positives": 0,
-  "roc_auc": null,
-  "split": "test",
+  "samples": 150750,
+  "positives": 263,
+  "roc_auc": 0.8414291738904672,
+  "split": "val",
   "checkpoint": "/home/roots/SDN_AI_GP/ARP_LSTM/models/supervised.pt",
   "files_evaluated": [
     "attack.pcap",
@@ -15,10 +15,9 @@
     "normal2.pcap",
     "pure_attack.pcap",
     "pure_attack2.pcap",
-    "synthetic_arp_spoof.pcap",
-    "synthetic_arp_spoof_extended.pcap"
+    "synthetic_arp_spoof.pcap"
   ],
-  "num_sequences": 5044,
-  "elapsed_seconds": 14.816909313201904,
-  "device": "cpu"
+  "num_sequences": 5025,
+  "elapsed_seconds": 2.8313629627227783,
+  "device": "cuda"
 }

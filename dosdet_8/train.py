@@ -137,6 +137,8 @@ class CachedDataset(Dataset):
         seq_raw = row["seq"]
         if isinstance(seq_raw, (bytes, bytearray, memoryview)):
             seq_flat = np.frombuffer(seq_raw, dtype=np.float32)
+        elif isinstance(seq_raw, str):
+            seq_flat = np.array(json.loads(seq_raw), dtype=np.float32).reshape(-1)
         else:
             seq_flat = np.array(seq_raw, dtype=np.float32).reshape(-1)
         seq = seq_flat.reshape(M, K_seq)
@@ -144,6 +146,8 @@ class CachedDataset(Dataset):
         static_raw = row["static"]
         if isinstance(static_raw, (bytes, bytearray, memoryview)):
             static = np.frombuffer(static_raw, dtype=np.float32)
+        elif isinstance(static_raw, str):
+            static = np.array(json.loads(static_raw), dtype=np.float32)
         else:
             static = np.array(static_raw, dtype=np.float32)
         y = np.array([float(row["y"])], dtype=np.float32)

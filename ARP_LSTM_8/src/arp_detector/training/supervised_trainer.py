@@ -43,9 +43,9 @@ class SupervisedTrainer:
         torch.use_deterministic_algorithms(False)
         self.logger = get_logger(__name__)
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        if self.device.type != "cuda":
-            raise RuntimeError("CUDA device required for int8-quantized training.")
-        self.use_cuda = True
+        # if self.device.type != "cuda":
+        #     raise RuntimeError("CUDA device required for int8-quantized training.")
+        self.use_cuda = (self.device.type == "cuda")
         ensure_dir(config.paths.models_dir)
         self.manifest = load_json(config.paths.manifest_path)
         self.feature_columns: Sequence[str] = self.manifest.get("feature_columns", [])

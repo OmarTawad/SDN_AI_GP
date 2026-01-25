@@ -46,6 +46,13 @@ def _read_parquet(path: str, columns: List[str] | None = None) -> pd.DataFrame:
     Helper that favours engines compatible with low-feature CPUs.
     Defaults to fastparquet when available and falls back to pyarrow.
     """
+    if str(path).endswith(".csv"):
+         try:
+             # Just read with pandas, JSON parsing happens in Dataset if needed
+             return pd.read_csv(path, usecols=columns if columns else None)
+         except Exception as e:
+             raise RuntimeError(f"Failed to read CSV shard {path}: {e}")
+
     override = os.environ.get("DOSDET_PARQUET_ENGINE", "").strip().lower()
     candidates = [override] if override else []
     candidates.extend(["fastparquet", "pyarrow"])
@@ -132,8 +139,33 @@ class CachedDataset(Dataset):
         row = self.df.iloc[idx]
         M = int(row["M"])
         K_seq = int(row["K_seq"])
-        seq = np.array(row["seq"], dtype=np.float32).reshape(M, K_seq)
-        static = np.array(row["static"], dtype=np.float32)
+
+        def _to_float_array(val):
+            if isinstance(val, (str, bytes)):
+                try:
+                    return np.array(json.loads(val), dtype=np.float32)
+                except Exception:
+                    pass
+            return np.array(val, dtype=np.float32)
+
+        seq_raw = row["seq"]
+        if isinstance(seq_raw, (bytes, bytearray, memoryview)):
+             # Parquet native blob
+             seq = np.frombuffer(seq_raw, dtype=np.float32).reshape(M, K_seq)
+        elif isinstance(seq_raw, str):
+             # CSV JSON string
+             seq = _to_float_array(seq_raw).reshape(M, K_seq)
+        else:
+             # Parquet native array/list
+             seq = np.array(seq_raw, dtype=np.float32).reshape(M, K_seq)
+        
+        static_raw = row["static"]
+        if isinstance(static_raw, (bytes, bytearray, memoryview)):
+             static = np.frombuffer(static_raw, dtype=np.float32)
+        elif isinstance(static_raw, str):
+             static = _to_float_array(static_raw)
+        else:
+             static = np.array(static_raw, dtype=np.float32)
         y = np.array([float(row["y"])], dtype=np.float32)
         fam = np.array([int(row["fam"])], dtype=np.int64)
         t0 = np.array([float(row["t0"])], dtype=np.float64)

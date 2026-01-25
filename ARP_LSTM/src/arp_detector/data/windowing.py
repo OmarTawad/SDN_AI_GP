@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Sequence
+from typing import Iterator, List, Sequence
 
 from .structures import PacketRecord, Window
 
@@ -23,13 +23,13 @@ class WindowBuilder:
     def __init__(self, params: WindowingParams) -> None:
         self.params = params
 
-    def build(self, packets: Sequence[PacketRecord]) -> List[Window]:
+    def build(self, packets: Sequence[PacketRecord]) -> Iterator[Window]:
         if not packets:
-            return []
+            return
         sorted_packets = sorted(packets, key=lambda pkt: pkt.timestamp)
         first_ts = sorted_packets[0].timestamp
         last_ts = sorted_packets[-1].timestamp
-        windows: List[Window] = []
+        
         index = 0
         window_start = first_ts
         window_size = self.params.window_size
@@ -53,17 +53,13 @@ class WindowBuilder:
                 right_idx += 1
 
             bucket = sorted_packets[left_idx:right_idx]
-            windows.append(
-                Window(
-                    index=index,
-                    start_time=window_start,
-                    end_time=window_end,
-                    packets=bucket,
-                )
+            yield Window(
+                index=index,
+                start_time=window_start,
+                end_time=window_end,
+                packets=bucket,
             )
             index += 1
             if max_windows is not None and index >= max_windows:
                 break
             window_start += hop
-
-        return windows

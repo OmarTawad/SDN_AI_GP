@@ -34,7 +34,10 @@ def _parse_time(value: str | float | int) -> float:
     try:
         return float(value)
     except ValueError:
-        return dt.datetime.fromisoformat(value).timestamp()
+        dt_obj = dt.datetime.fromisoformat(value)
+        if dt_obj.tzinfo is None:
+            dt_obj = dt_obj.replace(tzinfo=dt.timezone.utc)
+        return dt_obj.timestamp()
 
 
 def load_attack_intervals(path: Path, config: LabelsConfig) -> Dict[str, List[AttackInterval]]:
@@ -55,7 +58,7 @@ def load_attack_intervals(path: Path, config: LabelsConfig) -> Dict[str, List[At
             end=_parse_time(row["end"]),
             family=str(family).lower(),
         )
-        intervals.setdefault(str(row["pcap"]), []).append(interval)
+        intervals.setdefault(Path(str(row["pcap"])).name, []).append(interval)
     return intervals
 
 

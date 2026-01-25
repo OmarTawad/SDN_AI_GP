@@ -19,9 +19,26 @@ Requires-Dist: tqdm>=4.66
 Requires-Dist: typer[all]>=0.9
 Requires-Dist: shap>=0.41
 
-# DoS Detector (Neural_LSTM)
+# DoS Detector (Neural_LSTM, baseline float32)
 
 This module contains an end-to-end pipeline for detecting Distributed Denial of Service (DoS) activity from PCAP captures using an LSTM-based sequence classifier. The latest iteration shares the exact 1 s / 0.5 s sliding-window features used by the CNN (micro-bin histograms, protocol counts, SSDP tokens) and exposes a single binary head: every downstream score, gate, and attribution is derived from that attack-vs-normal probability. The inference stage highlights the most suspicious MAC and IP addresses observed during an attack, making it easier to pivot from the prediction to actionable remediation.
+
+## Variant Notes (Baseline)
+
+- Full-precision (float32) training and inference only.
+- `training.supervised.precision_mode` in `configs/config.yaml` is ignored in this variant.
+- No int8 quantization support; use `../Neural_LSTM_16_mixedP` (mixed precision) or `../Neural_LSTM_int8` (dynamic int8).
+- Run the commands below from the `Neural_LSTM/` directory.
+- These commands assume `configs/config.yaml` uses local paths under this directory (`models/`, `reports/`, `data/processed/`).
+
+## Quick Commands (Baseline)
+
+```bash
+python3 -m dos_detector.cli extract-features "pcaps/*.pcap" --out data/processed --config-path configs/config.yaml
+python3 -m dos_detector.cli train-supervised --config-path configs/config.yaml
+python3 -m dos_detector.cli infer path/to/capture.pcap --out reports/prediction.json --config-path configs/config.yaml
+python3 -m dos_detector.cli batch-infer "pcaps/*.pcap" --out-dir reports --config-path configs/config.yaml
+```
 
 ## Environment Setup
 
@@ -32,7 +49,7 @@ This module contains an end-to-end pipeline for detecting Distributed Denial of 
    ```
 2. Install the project in editable mode along with the CLI:
    ```bash
-   pip install -e ..
+   pip install -e ..[all]
    ```
    The root `pyproject.toml` exposes the `dos-detector` console entrypoint used below.
 

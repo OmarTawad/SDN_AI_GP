@@ -22,12 +22,14 @@ class FeaturePipeline:
         self._last_windows: List[Window] = []
         self._last_host_maps: Dict[str, Dict[int, Dict[str, int]]] = {"macs": {}, "ips": {}}
 
-    def process_single(self, pcap_path: Path) -> Tuple[pd.DataFrame, object]:
+    def process_single(self, pcap_path: Path, limit: int = 0, limit_mb: float = 0.0) -> Tuple[pd.DataFrame, object]:
         limit_env = os.getenv("DOS_LIMIT_PKTS")
-        limit = int(limit_env) if (limit_env and limit_env.isdigit()) else None
+        pkt_limit = int(limit_env) if (limit_env and limit_env.isdigit()) else None
+        
+        byte_limit = int(limit_mb * 1024 * 1024) if limit_mb is not None and limit_mb > 0 else None
 
         t0 = time.perf_counter()
-        packets = read_pcap(pcap_path, limit=limit)
+        packets = read_pcap(pcap_path, limit=pkt_limit, byte_limit=byte_limit)
         t1 = time.perf_counter()
 
         builder = WindowBuilder(WindowingParams(
@@ -35,8 +37,10 @@ class FeaturePipeline:
             hop_size=self.config.windowing.hop_size,
             max_windows=self.config.windowing.max_windows,
         ))
-        windows = builder.build(packets)
-        self._last_windows = list(windows)
+        windows = list(builder.build(packets))
+        if limit > 0:
+            windows = windows[:limit]
+        self._last_windows = windows
         self._last_host_maps = self._build_host_maps(self._last_windows)
         t2 = time.perf_counter()
 
@@ -101,7 +105,7 @@ class FeaturePipeline:
             "ips": {int(idx): {ip: int(count) for ip, count in counts.items()} for idx, counts in data.get("ips", {}).items()},
         }
 
-    def process_files(self, pcaps: Iterable[Path], out_dir: Path) -> Dict[str, object]:
+    def process_files(self, pcaps: Iterable[Path], out_dir: Path, limit: int = 0, limit_mb: float = 0.0) -> Dict[str, object]:
         ensure_dir(out_dir)
         paths = [Path(p) for p in pcaps]
 
@@ -111,14 +115,14 @@ class FeaturePipeline:
         for idx, p in enumerate(progress(paths, desc="Extracting", unit="pcap"), 1):
             try:
                 print(f"--> ({idx}/{len(paths)}) {p.name}: start", flush=True)
-                df, meta = self.process_single(p)
+                df, meta = self.process_single(p, limit=limit, limit_mb=limit_mb)
 
                 if not feature_cols:
                     feature_cols = [c for c in df.columns if c not in {
                         "pcap","window_index","window_start","window_end","attack","family","family_index"
                     }]
 
-                save_dataframe(out_dir / f"{p.stem}.csv", df)
+                save_dataframe(out_dir / f"{p.stem}.parquet", df)
                 self.save_last_host_maps(p, out_dir)
                 frames_meta.append({
                     "pcap": p.name,
@@ -133,8 +137,24 @@ class FeaturePipeline:
                 print(f"[SKIP] {p.name}: {e}", flush=True)
                 continue
 
-        save_json(self.config.paths.manifest_path, {"feature_columns": feature_cols, "frames": frames_meta})
-        return {"feature_columns": feature_cols, "frames": frames_meta}
+        # Incremental manifest update
+        manifest_path = self.config.paths.manifest_path
+        existing_frames = []
+        if manifest_path.exists():
+             try:
+                 existing_data = json.loads(manifest_path.read_text())
+                 existing_frames = existing_data.get("frames", [])
+                 if not feature_cols:
+                     feature_cols = existing_data.get("feature_columns", [])
+             except Exception:
+                 pass
+        
+        # Merge, preferring new entries
+        new_names = {f["pcap"] for f in frames_meta}
+        merged_frames = [f for f in existing_frames if f["pcap"] not in new_names] + frames_meta
+        
+        save_json(manifest_path, {"feature_columns": feature_cols, "frames": merged_frames})
+        return {"feature_columns": feature_cols, "frames": merged_frames}
 
     def _build_host_maps(self, windows: Iterable[Window]) -> Dict[str, Dict[int, Dict[str, int]]]:
         macs: Dict[int, Dict[str, int]] = {}

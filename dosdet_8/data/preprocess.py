@@ -104,8 +104,28 @@ def preprocess(cfg: dict, pcaps_glob, labels_csv: str):
     # Per-file loop
     for p in tqdm(files, desc="PCAP files", unit="file"):
         base = os.path.basename(p)
-        windows = iter_windows(iter_rows_from_pcap(p, ssdp_v4, ssdp_v6), W, S, M)
-        for (t0, t1, win_rows, bins) in tqdm(windows, desc=f"Windows: {base}", unit="win", leave=False):
+        byte_limit = cfg.get("preprocess", {}).get("byte_limit", None)
+        
+        # Explicitly check if file is readable to catch broken symlinks early
+        try:
+            with open(p, 'rb'): pass
+        except Exception as e:
+            print(f"[WARN] Skipping unreadable file {p}: {e}")
+            continue
+
+        windows = iter_windows(iter_rows_from_pcap(p, ssdp_v4, ssdp_v6, byte_limit=byte_limit), W, S, M)
+            
+        limit = int(cfg.get("preprocess", {}).get("limit", 0))
+        total_windows = 0
+        if 'bytes_written_in_shard' not in locals():
+            bytes_written_in_shard = 0
+        
+        pbar = tqdm(windows, desc=f"Windows: {base}", unit="win", leave=False)
+        for (t0, t1, win_rows, bins) in pbar:
+            if limit > 0:
+                pbar.set_postfix(valid=f"{total_windows}/{limit}")
+            if limit > 0 and total_windows >= limit:
+                 break
             if not win_rows:
                 continue
             seq_np, extras = compute_sequence_features(win_rows, bins, M, top_ports)
@@ -127,23 +147,40 @@ def preprocess(cfg: dict, pcaps_glob, labels_csv: str):
             buf["M"].append(int(M))
             buf["K_seq"].append(int(seq_np.shape[1]))
             buf["K_static"].append(int(static_vec.size))
+            buf["seq"].append(json.dumps(seq_np.astype(np.float32).reshape(-1).tolist()))
+            buf["static"].append(json.dumps(static_vec.astype(np.float32).tolist()))
 
-            seq_list = seq_np.astype(np.float32).reshape(-1).tolist()
-            static_list = static_vec.astype(np.float32).tolist()
-            buf["seq"].append(seq_list)
-            buf["static"].append(static_list)
-            bytes_in_buffer += _estimate_row_bytes(seq_list, static_list)
+            total_windows += 1
 
-            # Flush by batch size or size threshold
-            if len(buf["file"]) >= BATCH_ROWS or bytes_in_buffer >= shard_max_mb * 1024 * 1024:
+            # Flush by batch size
+            if len(buf["file"]) >= BATCH_ROWS:
                 _flush_shard()
+
+            # Rotate shard if size exceeds limit
+            if bytes_written_in_shard >= shard_max_mb * 1024 * 1024:
+                # finalize current shard
+                if shard_writer and hasattr(shard_writer, "close"):
+                    shard_writer.close()
+                manifest["files"].append({"path": shard_path})
+                # persist manifest incrementally (crash-safe)
+                with open(manifest_path, "w") as f:
+                    json.dump(manifest, f, indent=2)
+                # open next shard
+                _open_new_shard()
 
         # end file loop
 
     # Flush any trailing rows
     if buf["file"]:
         _flush_shard()
-
+    # Close last shard
+    if shard_writer and hasattr(shard_writer, "close"):
+        shard_writer.close()
+        manifest["files"].append({"path": shard_path})
+    elif not use_pyarrow and 'bytes_written_in_shard' in locals() and bytes_written_in_shard > 0:
+         # fastparquet/csv case: file is already written, just need to record it
+         manifest["files"].append({"path": shard_path})
+    
     with open(manifest_path, "w") as f:
         json.dump(manifest, f, indent=2)
     print(f"\nWrote {len(manifest['files'])} shard(s) to {cache_dir}")
@@ -158,8 +195,19 @@ def main():
         help="Optional glob override(s); pass one or more patterns. Defaults to config preprocess.pcaps_glob",
     )
     ap.add_argument("--labels", default=None, help="Optional labels.csv override; defaults to config preprocess.labels_csv")
+    ap.add_argument("--limit", type=int, default=0, help="Limit number of windows to process per file")
+    ap.add_argument("--limit-mb", type=float, default=0, help="Limit processing to N megabytes of data per file")
     args = ap.parse_args()
     cfg = yaml.safe_load(open(args.config))
+
+    if args.limit > 0: 
+        print(f"[INFO] Limiting to {args.limit} windows per file.")
+        cfg["preprocess"]["limit"] = args.limit
+
+    if args.limit_mb > 0:
+        print(f"[INFO] Limiting to {args.limit_mb} MB per file.")
+        cfg["preprocess"]["byte_limit"] = int(args.limit_mb * 1024 * 1024)
+    
     pcaps = args.pcaps or cfg["preprocess"]["pcaps_glob"]
     labels = args.labels or cfg["preprocess"]["labels_csv"]
     preprocess(cfg, pcaps, labels)

@@ -27,12 +27,18 @@ class FeaturePipeline:
             "reply_claims": {},
         }
 
-    def process_single(self, pcap_path: Path) -> Tuple[pd.DataFrame, object]:
+    def process_single(self, pcap_path: Path, limit: int = 0, limit_mb: float = 0.0) -> Tuple[pd.DataFrame, object]:
+        # Logic to handle 0 as unlimited for packet limits
         limit_env = os.getenv("ARP_LIMIT_PKTS")
-        limit = int(limit_env) if (limit_env and limit_env.isdigit()) else None
+        if limit_env and limit_env.isdigit():
+            limit = int(limit_env)
+        elif limit == 0:
+            limit = None
+
+        byte_limit = int(limit_mb * 1024 * 1024) if limit_mb > 0 else None
 
         t0 = time.perf_counter()
-        packets = read_pcap(pcap_path, limit=limit)
+        packets = read_pcap(pcap_path, limit=limit, byte_limit=byte_limit)
         t1 = time.perf_counter()
 
         builder = WindowBuilder(WindowingParams(
@@ -40,8 +46,10 @@ class FeaturePipeline:
             hop_size=self.config.windowing.hop_size,
             max_windows=self.config.windowing.max_windows,
         ))
-        windows = builder.build(packets)
-        self._last_windows = list(windows)
+        windows = list(builder.build(packets))
+        if limit is not None and limit > 0:
+            windows = windows[:limit]
+        self._last_windows = windows
         self._last_host_maps = self._build_host_maps(self._last_windows)
         t2 = time.perf_counter()
 
@@ -50,12 +58,24 @@ class FeaturePipeline:
         t3 = time.perf_counter()
 
         intervals_csv = self.config.labels.intervals_csv
-        if intervals_csv and Path(intervals_csv).exists():
-            intervals_map = load_attack_intervals(Path(intervals_csv), self.config.labels)
-            intervals = intervals_map.get(pcap_path.name, [])
-            labs = label_windows(windows, intervals, self.config.labels)
-            frame["attack"] = [x.attack for x in labs]
-            frame["family"] = [x.family for x in labs]
+        if intervals_csv:
+            csv_path = Path(intervals_csv)
+            if csv_path.exists():
+                print(f"[PROCESSOR_DEBUG] Loading CSV from {csv_path.absolute()}")
+                intervals_map = load_attack_intervals(csv_path, self.config.labels)
+                print(f"[PROCESSOR_DEBUG] Map keys: {list(intervals_map.keys())}")
+                print(f"[PROCESSOR_DEBUG] Looking for: '{pcap_path.name}'")
+                intervals = intervals_map.get(pcap_path.name, [])
+                if not intervals:
+                     print(f"[PROCESSOR_DEBUG] Intervals NOT FOUND for {pcap_path.name}")
+                else:
+                     print(f"[PROCESSOR_DEBUG] Found {len(intervals)} intervals for {pcap_path.name}")
+                
+                labs = label_windows(windows, intervals, self.config.labels)
+                frame["attack"] = [x.attack for x in labs]
+                frame["family"] = [x.family for x in labs]
+            else:
+                print(f"[PROCESSOR_DEBUG] CSV NOT FOUND: {csv_path.absolute()}")
         else:
             frame["attack"] = 0
             frame["family"] = self.config.labels.default_family
@@ -142,7 +162,7 @@ class FeaturePipeline:
             },
         }
 
-    def process_files(self, pcaps: Iterable[Path], out_dir: Path) -> Dict[str, object]:
+    def process_files(self, pcaps: Iterable[Path], out_dir: Path, limit: int = 0, limit_mb: float = 0.0) -> Dict[str, object]:
         ensure_dir(out_dir)
         paths = [Path(p) for p in pcaps]
 
@@ -152,7 +172,7 @@ class FeaturePipeline:
         for idx, p in enumerate(progress(paths, desc="Extracting", unit="pcap"), 1):
             try:
                 print(f"--> ({idx}/{len(paths)}) {p.name}: start", flush=True)
-                df, meta = self.process_single(p)
+                df, meta = self.process_single(p, limit=limit, limit_mb=limit_mb)
 
                 if not feature_cols:
                     feature_cols = [c for c in df.columns if c not in {
