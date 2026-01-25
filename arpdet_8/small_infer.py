@@ -28,10 +28,6 @@ from features.static_features import compute_static_features
 from infer import _load_artifacts
 
 torch.set_num_threads(min(2, max(1, os.cpu_count() or 1)))
-try:
-    torch.set_num_interop_threads(1)
-except (AttributeError, RuntimeError):
-    pass
 
 
 def _iso(ts: float) -> str:
