@@ -70,6 +70,35 @@ def _load_model(cfg, feature_columns: Sequence[str], device: torch.device) -> Se
     return model
 
 
+def _resolve_existing_path(paths: Sequence[Path], label: str) -> Path:
+    for path in paths:
+        if path is not None and path.exists():
+            return path
+    tried = ", ".join(str(p) for p in paths)
+    raise FileNotFoundError(f"{label} not found. Tried: {tried}")
+
+
+def _resolve_artifact_paths(cfg) -> None:
+    repo_root = ROOT.parent
+    cfg.paths.scaler_path = _resolve_existing_path(
+        [
+            cfg.paths.scaler_path,
+            ROOT / "models" / "feature_scaler.joblib",
+            repo_root / "ARP_LSTM" / "models" / "feature_scaler.joblib",
+            repo_root / "ARP_LSTM" / "models_int8" / "feature_scaler.joblib",
+        ],
+        "Scaler",
+    )
+    cfg.paths.supervised_model_path = _resolve_existing_path(
+        [
+            cfg.paths.supervised_model_path,
+            ROOT / "models" / "supervised.pt",
+            repo_root / "ARP_LSTM" / "models" / "supervised.pt",
+        ],
+        "Supervised model",
+    )
+
+
 def _window_packet_counts(window: Window) -> tuple[int, int, int]:
     arp_packets = 0
     arp_requests = 0
@@ -262,6 +291,7 @@ def main() -> None:
         raise FileNotFoundError(f"Config not found: {args.config} (looked in {cfg_path})")
 
     cfg = load_config(cfg_path)
+    _resolve_artifact_paths(cfg)
 
     device = torch.device("cpu")
     torch.set_num_threads(min(2, os.cpu_count() or 1))
