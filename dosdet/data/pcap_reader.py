@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Dict, Iterable, Iterator, Optional, List, Tuple
+from typing import Dict, Iterator
 from scapy.utils import PcapReader
 from .packet_to_frame import scapy_pkt_to_row
 from features.ssdp_parser import parse_ssdp_payload
@@ -16,7 +16,6 @@ def iter_rows_from_pcap(
     """
     Stream-normalize packets from a pcap file into dict rows.
     """
-<<<<<<< HEAD
     accumulated_bytes = 0
     with PcapReader(pcap_path) as reader:
         for pkt in reader:
