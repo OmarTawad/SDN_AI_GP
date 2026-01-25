@@ -65,6 +65,12 @@ def _reply_conflict_stats(win_rows: list[dict]) -> tuple[int, int]:
     return conflict_macs, conflict_ip_count
 
 
+def _require_qnnpack() -> None:
+    supported = set(torch.backends.quantized.supported_engines or [])
+    if "qnnpack" not in supported:
+        raise RuntimeError("qnnpack backend is not supported by this PyTorch build.")
+
+
 def _infer_window(
     window: tuple[float, float, list[dict], list[int]],
     cfg: Dict[str, Any],
@@ -227,9 +233,10 @@ def main() -> None:
         raise FileNotFoundError(f"PCAP not found: {pcap_path}")
 
     save_dir = cfg["paths"]["artifacts_dir"]
+    _require_qnnpack()
     quantized = True
     model, scaler, slimmer, meta, calib = _load_artifacts(
-        save_dir, cfg, quantized=quantized, quantized_checkpoint=None, quant_backend=None
+        save_dir, cfg, quantized=quantized, quantized_checkpoint=None, quant_backend="qnnpack"
     )
     device = torch.device("cpu")
 
