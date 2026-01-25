@@ -162,6 +162,9 @@ def read_pcap(path: Path, limit: Optional[int] = None, byte_limit: Optional[int]
                     break
 
             ts = _timestamp_from_meta(meta)
+            if index == 0:
+                raise RuntimeError(f"DEBUG_CHECK_TS: {ts} (Raw from pcap_reader)")
+
             # FIX: Add 4 hours correction ONLY for attack.pcap which is known to be misaligned (UTC+4 issue)
             if path.name == "attack.pcap":
                 ts += 14400.0
