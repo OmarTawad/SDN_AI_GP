@@ -15,11 +15,7 @@ infer.py            # calibrated inference over pcaps
 explain.py          # permutation importances + attention plots
 Makefile            # convenience targets (preprocess/train/infer/eval)
 config.yaml         # single source of truth for paths + hyper-params
-<<<<<<< HEAD
-requirements.txt    # python dependencies
-=======
 requirements.txt    # legacy dependencies (use repo-root pyproject.toml)
->>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
 ```
 
 Generated artefacts live under `artifacts/`, cached parquet shards under `cache/`, and inference reports under `reports/` (all ignored by git).
@@ -32,11 +28,7 @@ Generated artefacts live under `artifacts/`, cached parquet shards under `cache/
    python -m venv .venv
    source .venv/bin/activate
    pip install -U pip
-<<<<<<< HEAD
-   pip install -r requirements.txt
-=======
    pip install -e ..[all]
->>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
    ```
    Install a CUDA-enabled PyTorch build if you plan to train on GPU (see https://pytorch.org/get-started/locally/).
 
@@ -68,10 +60,7 @@ The `Makefile` reflects the standard flow; the commands below assume you activat
    ```
    Override CLI flags if you need to point at other pcaps or tweak decision thresholds (see `infer.py --help`).
    Besides the existing file-level verdict, each JSON report now includes the most suspicious source IP+MAC pairing plus the top 5 offenders, with companion `*_ips.csv`/`*_macs.csv` ranked exports.
-<<<<<<< HEAD
-=======
    The detector emits a single sigmoid logit (attack vs. normal); the suspicious actor ranking is derived from those window probabilities so you still get the leading MAC/IP context per file.
->>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
    To score an arbitrary capture outside `samples/`, simply point `--pcaps` at your file or glob:
    ```bash
    python3 infer.py --config config.yaml --pcaps "/data/captures/new_attack.pcap" --out custom_reports
@@ -107,8 +96,4 @@ Unit tests live under `tests/`. Run them with:
 ```bash
 pytest
 ```
-<<<<<<< HEAD
-(install `pytest` via `pip install -r requirements.txt`).
-=======
 `pytest` is included in the unified install (`pip install -e ..[all]`).
->>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
