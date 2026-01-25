@@ -48,6 +48,9 @@ reports/**
 *.pyc
 *.venv/
 *venv/
+.venv/
+lib/
+venv/
 
 # processed datasets / generated windows/hosts files
 **/data/processed/**

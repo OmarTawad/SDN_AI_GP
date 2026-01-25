@@ -94,6 +94,7 @@ def load_config(path: Path) -> Config:
         postprocessing=postprocessing,
         explainability=explainability,
         live=live,
+        device=raw.get("device", "auto"),
     )
 
     # resolve any relative paths against the config file's directory

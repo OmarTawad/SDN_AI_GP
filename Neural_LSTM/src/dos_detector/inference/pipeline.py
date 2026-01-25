@@ -40,7 +40,8 @@ class InferencePipeline:
         configure_logging()
         seed_everything(config.seed, deterministic=False)
         self.logger = get_logger(__name__)
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = self._select_device(config.device if hasattr(config, "device") else "auto")
+
         self.manifest = load_json(config.paths.manifest_path)
         self.feature_columns: Sequence[str] = self.manifest.get("feature_columns", [])
         if not self.feature_columns:
@@ -54,6 +55,31 @@ class InferencePipeline:
         self.scaler = load_joblib(config.paths.scaler_path)
         self.gate = DecisionGate(config.postprocessing)
         self.feature_pipeline = FeaturePipeline(config)
+
+    def _select_device(self, requested: str) -> torch.device:
+        if requested == "cpu":
+            return torch.device("cpu")
+        if requested == "cuda":
+            if not torch.cuda.is_available():
+                self.logger.warning("CUDA requested but not available. Falling back to CPU.", extra={"markup": True})
+                return torch.device("cpu")
+            return torch.device("cuda")
+        
+        # Auto mode
+        if not torch.cuda.is_available():
+            return torch.device("cpu")
+            
+        try:
+            # Test CUDA capability with actual computation and sync
+            # This is necessary because some errors (like no kernel image) are asynchronous
+            # or may not trigger on simple memory allocation.
+            t = torch.tensor([1.0, 2.0]).to("cuda")
+            _ = t * t
+            torch.cuda.synchronize()
+            return torch.device("cuda")
+        except RuntimeError as e:
+            self.logger.warning(f"CUDA available but failed sanity check (likely version mismatch): {e}. Falling back to CPU.", extra={"markup": True})
+            return torch.device("cpu")
 
     def _load_supervised_model(self) -> SequenceClassifier:
         model = SequenceClassifier(
