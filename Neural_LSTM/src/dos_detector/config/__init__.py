@@ -97,6 +97,9 @@ def load_config(path: Path) -> Config:
         device=raw.get("device", "auto"),
     )
 
-    # resolve any relative paths against the config file's directory
-    cfg = resolve_paths(cfg, root=path.parent)
+    # resolve any relative paths against the project root when configs/ is used
+    root = path.parent
+    if root.name == "configs":
+        root = root.parent
+    cfg = resolve_paths(cfg, root=root)
     return cfg
