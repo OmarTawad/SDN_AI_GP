@@ -38,6 +38,7 @@ from arp_detector.models.supervised import SequenceClassifier
 from arp_detector.utils.io import load_joblib, load_json
 
 DEFAULT_CONFIG = ROOT / "configs" / "config.yaml"
+WINDOW_META_COLS = {"window_index", "window_start", "window_end"}
 
 
 def _iso(ts: float) -> str:
@@ -123,6 +124,37 @@ def _collect_windows(
     return windows
 
 
+def _extract_frame(
+    cfg,
+    pcap_path: Path,
+    window_sec: float,
+    hop_sec: float,
+    num_windows: int,
+) -> tuple[list[Window], Any]:
+    windows = _collect_windows(pcap_path, window_sec, hop_sec, num_windows)
+    extractor = FeatureExtractor(cfg.feature, window_sec)
+    frame = extractor.extract(windows)
+    if frame.empty:
+        raise ValueError("Feature frame is empty for selected windows.")
+    return windows, frame
+
+
+def _resolve_feature_columns(manifest_path: Path, frame) -> list[str]:
+    feature_columns: list[str] = []
+    if manifest_path.exists():
+        manifest = load_json(manifest_path)
+        feature_columns = manifest.get("feature_columns") or []
+        if feature_columns:
+            missing = [name for name in feature_columns if name not in frame.columns]
+            if missing:
+                raise ValueError(f"Feature manifest columns missing from frame: {missing}")
+    if not feature_columns:
+        feature_columns = [c for c in frame.columns if c not in WINDOW_META_COLS]
+    if not feature_columns:
+        raise ValueError("Feature columns could not be resolved.")
+    return feature_columns
+
+
 def infer_windows(
     pcap_path: Path,
     cfg,
@@ -134,12 +166,11 @@ def infer_windows(
     window_sec: float,
     hop_sec: float,
     tau: float,
+    windows: list[Window] | None = None,
+    frame: Any | None = None,
 ) -> tuple[list[Dict[str, Any]], int | None]:
-    windows = _collect_windows(pcap_path, window_sec, hop_sec, num_windows)
-    extractor = FeatureExtractor(cfg.feature, window_sec)
-    frame = extractor.extract(windows)
-    if frame.empty:
-        raise ValueError("Feature frame is empty for selected windows.")
+    if windows is None or frame is None:
+        windows, frame = _extract_frame(cfg, pcap_path, window_sec, hop_sec, num_windows)
 
     feature_matrix = frame[feature_columns].to_numpy(dtype=np.float32, copy=True)
     scaled = scaler.transform(feature_matrix).astype(np.float32, copy=False)
@@ -204,6 +235,8 @@ def infer_first_window(
     window_sec: float,
     hop_sec: float,
     tau: float,
+    windows: list[Window] | None = None,
+    frame: Any | None = None,
 ) -> tuple[Dict[str, Any], int | None]:
     results, attn_peak = infer_windows(
         pcap_path,
@@ -216,6 +249,8 @@ def infer_first_window(
         window_sec=window_sec,
         hop_sec=hop_sec,
         tau=tau,
+        windows=windows,
+        frame=frame,
     )
     return results[0], attn_peak
 
@@ -242,26 +277,34 @@ def main() -> None:
         raise FileNotFoundError(f"Config not found: {args.config} (looked in {cfg_path})")
 
     cfg = load_config(cfg_path)
-    manifest = load_json(cfg.paths.manifest_path)
-    feature_columns = manifest.get("feature_columns") or []
-    if not feature_columns:
-        raise ValueError(f"Manifest missing feature_columns → {cfg.paths.manifest_path}")
-
     device = torch.device("cpu")
     torch.set_num_threads(min(2, os.cpu_count() or 1))
-
-    scaler = load_joblib(cfg.paths.scaler_path)
-    model = _load_model(cfg, feature_columns, device)
 
     window_sec = float(args.window_sec if args.window_sec is not None else cfg.windowing.window_size)
     hop_sec = float(cfg.windowing.hop_size)
     tau = float(args.tau if args.tau is not None else cfg.postprocessing.tau_window)
     num_windows = max(1, int(args.num_windows))
 
+    windows, frame = _extract_frame(cfg, args.pcap, window_sec, hop_sec, num_windows)
+    feature_columns = _resolve_feature_columns(cfg.paths.manifest_path, frame)
+
+    scaler = load_joblib(cfg.paths.scaler_path)
+    model = _load_model(cfg, feature_columns, device)
+
     start = time.perf_counter()
     if num_windows == 1:
         result, attn_peak = infer_first_window(
-            args.pcap, cfg, feature_columns, model, scaler, device, window_sec, hop_sec, tau
+            args.pcap,
+            cfg,
+            feature_columns,
+            model,
+            scaler,
+            device,
+            window_sec,
+            hop_sec,
+            tau,
+            windows=windows,
+            frame=frame,
         )
         result["pcap"] = str(args.pcap.resolve())
         result["inference_time_sec"] = round(time.perf_counter() - start, 6)
@@ -277,7 +320,18 @@ def main() -> None:
         suffix = "single_window"
     else:
         windows, attn_peak = infer_windows(
-            args.pcap, cfg, feature_columns, model, scaler, device, num_windows, window_sec, hop_sec, tau
+            args.pcap,
+            cfg,
+            feature_columns,
+            model,
+            scaler,
+            device,
+            num_windows,
+            window_sec,
+            hop_sec,
+            tau,
+            windows=windows,
+            frame=frame,
         )
         total_time = round(time.perf_counter() - start, 6)
         for idx, win in enumerate(windows, start=1):
