@@ -27,10 +27,11 @@ class FeaturePipeline:
             "reply_claims": {},
         }
 
-    def process_single(self, pcap_path: Path, limit: int = 0, limit_mb: float = 0.0) -> Tuple[pd.DataFrame, object]:
         limit_env = os.getenv("ARP_LIMIT_PKTS")
         if limit_env and limit_env.isdigit():
             limit = int(limit_env)
+        elif limit == 0:
+            limit = None
 
         byte_limit = int(limit_mb * 1024 * 1024) if limit_mb > 0 else None
 
