@@ -2,7 +2,7 @@ seed: 1337
 
 paths:
   cache_dir: cache
-  artifacts_dir: artifacts
+  artifacts_dir: ../dosdet/artifacts
   reports_dir: reports
 
 data:
