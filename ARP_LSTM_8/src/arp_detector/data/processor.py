@@ -28,6 +28,7 @@ class FeaturePipeline:
         }
 
     def process_single(self, pcap_path: Path, limit: int = 0, limit_mb: float = 0.0) -> Tuple[pd.DataFrame, object]:
+        # Logic to handle 0 as unlimited for packet limits
         limit_env = os.getenv("ARP_LIMIT_PKTS")
         if limit_env and limit_env.isdigit():
             limit = int(limit_env)
@@ -46,7 +47,7 @@ class FeaturePipeline:
             max_windows=self.config.windowing.max_windows,
         ))
         windows = list(builder.build(packets))
-        if limit > 0:
+        if limit is not None and limit > 0:
             windows = windows[:limit]
         self._last_windows = windows
         self._last_host_maps = self._build_host_maps(self._last_windows)
