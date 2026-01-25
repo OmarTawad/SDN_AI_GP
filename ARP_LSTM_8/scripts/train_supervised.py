@@ -1,9 +1,11 @@
-#!/usr/bin/env python3
-import argparse, torch
+import sys
+from pathlib import Path
+# Ensure src is in python path if running locally without install
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+
 from arp_detector.config import load_config
 from arp_detector.utils.io import load_json
 from arp_detector.training.supervised_trainer import SupervisedTrainer
-from pathlib import Path
 
 torch.set_num_threads(2)
 
