@@ -4,9 +4,13 @@
 from __future__ import annotations
 
 import logging
+<<<<<<< HEAD
+from typing import Any, Dict
+=======
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, Dict, Optional
+>>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
 
 try:  # pragma: no cover - optional dependency
     import structlog
@@ -14,6 +18,12 @@ except ImportError:  # pragma: no cover
     structlog = None  # type: ignore
 
 
+<<<<<<< HEAD
+def configure_logging(level: str = "INFO") -> None:
+    """Configure structlog for console-friendly JSON logging."""
+
+    logging.basicConfig(level=getattr(logging, level.upper(), logging.INFO))
+=======
 def configure_logging(level: str = "INFO", log_file: Optional[Path | str] = None) -> None:
     """Configure structlog for console-friendly JSON logging."""
 
@@ -34,6 +44,7 @@ def configure_logging(level: str = "INFO", log_file: Optional[Path | str] = None
         handlers=handlers,
         force=True,
     )
+>>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
     if structlog is None:
         logging.getLogger(__name__).warning("structlog not available; using stdlib logging")
         return
@@ -62,4 +73,8 @@ def get_logger(name: str) -> structlog.BoundLogger:
 def log_config(logger: structlog.BoundLogger, config: Dict[str, Any]) -> None:
     """Log a configuration snapshot."""
 
+<<<<<<< HEAD
     logger.info("config", **config)
+=======
+    logger.info("config", **config)
+>>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7

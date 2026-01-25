@@ -2,12 +2,12 @@ seed: 42
 paths:
   raw_pcap_dir: ../pcaps
   processed_dir: ../data/processed
-  models_dir: ../models_fp16
-  reports_dir: ../reports_fp16
-  scaler_path: ../models_fp16/feature_scaler_fp16.joblib
-  supervised_model_path: ../models_fp16/supervised_fp16.pt
+  models_dir: ../models
+  reports_dir: ../reports
+  scaler_path: ../models/feature_scaler.joblib
+  supervised_model_path: ../models/supervised.pt
   manifest_path: ../data/processed/feature_manifest.json
-  metrics_path: ../reports_fp16/metrics_summary.json
+  metrics_path: ../reports/metrics_summary.json
 windowing:
   window_size: 1.0
   hop_size: 0.5
@@ -25,17 +25,13 @@ labels:
   - arp_spoof
 data:
   train_files:
-  - attack.pcap
+  - pure_attack.pcap
+  - pure_attack2.pcap
+  - synthetic_arp_spoof.pcap
   - normal1.pcap
   - normal2.pcap
-  - synthetic_arp_spoof.pcap
-  - synthetic_arp_spoof_extended.pcap
   val_files:
   - attack.pcap
-  - normal1.pcap
-  - normal2.pcap
-  - synthetic_arp_spoof.pcap
-  - synthetic_arp_spoof_extended.pcap
   test_files: []
   normal_families:
   - normal

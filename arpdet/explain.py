@@ -7,6 +7,7 @@ os.environ.setdefault("OPENBLAS_NUM_THREADS", "2")
 os.environ.setdefault("MKL_NUM_THREADS", "2")
 os.environ.setdefault("NUMEXPR_NUM_THREADS", "2")
 os.environ.setdefault("TORCH_CPP_LOG_LEVEL", "ERROR")
+os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
 
 import argparse
 import glob
@@ -157,7 +158,7 @@ def main() -> None:
         cfg = yaml.safe_load(f)
 
     model, scaler, slimmer, meta = _load_artifacts(cfg)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cpu")
     model.to(device)
 
     pcap_glob = args.pcaps or cfg["preprocess"]["pcaps_glob"]

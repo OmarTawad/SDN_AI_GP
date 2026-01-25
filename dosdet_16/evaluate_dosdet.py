@@ -17,6 +17,11 @@ os.environ.setdefault("NUMEXPR_NUM_THREADS", "2")
 os.environ.setdefault("TORCH_CPP_LOG_LEVEL", "ERROR")
 os.environ.setdefault("TORCH_DISABLE_NNPACK", "1")
 
+import sys
+sys.set_int_max_str_digits(50000)
+
+import pandas as pd
+import pandas as pd
 import numpy as np
 import torch
 import yaml
@@ -29,10 +34,10 @@ from models.dws_cnn import FastDetector
 from train import CachedDataset, collate, load_manifest, _read_parquet
 
 torch.set_num_threads(min(2, max(1, os.cpu_count() or 1)))
-try:
-    torch.set_num_interop_threads(1)
-except AttributeError:
-    pass
+# try:
+#     torch.set_num_interop_threads(1)
+# except (AttributeError, RuntimeError):
+#     pass
 try:
     if hasattr(torch.backends.nnpack, "set_flags"):
         torch.backends.nnpack.set_flags(False)
@@ -53,14 +58,16 @@ def _resolve_path(path: str | Path) -> Path:
 def _test_paths(cfg: dict) -> List[str]:
     cache_dir = _resolve_path(cfg["paths"]["cache_dir"])
     manifest = load_manifest(str(cache_dir))
-    shard_rel = [entry["path"] for entry in manifest.get("files", [])]
+    shard_rel = [entry["path"] for entry in manifest.get("files", []) if entry.get("path")]
     if not shard_rel:
         raise FileNotFoundError("No parquet shards listed in cache/manifest.json.")
 
     stats = []
     for rel in shard_rel:
         path = _resolve_path(rel)
-        pos = int(_read_parquet(path, columns=["y"])["y"].sum())
+        df_temp = _read_parquet(path, columns=["y"])
+        df_temp["y"] = pd.to_numeric(df_temp["y"], errors='coerce').fillna(0)
+        pos = int(df_temp["y"].sum())
         stats.append({"path": str(path), "pos": pos})
     stats.sort(key=lambda s: (-s["pos"], s["path"]))
 
@@ -122,10 +129,7 @@ def _load_artifacts(art_dir: Path, cfg: dict, device: torch.device, amp_enabled:
     checkpoint = torch.load(art_dir / "model_best.pt", map_location=device)
     model.load_state_dict(checkpoint["model"])
     model.to(device)
-    if amp_enabled:
-        model = model.half()
-    else:
-        model = model.float()
+    model = model.float()
     model.eval()
     calib_path = art_dir / "calibration.json"
     if calib_path.exists():
@@ -162,9 +166,9 @@ def _evaluate(
             stat_scaled = scaler.transform(stat_np)
             stat_slim = slimmer.transform(stat_scaled).astype(np.float32)
             static_t = torch.from_numpy(stat_slim).to(device, non_blocking=True)
-            if amp_enabled:
-                seq = seq.half()
-                static_t = static_t.half()
+            # Always run inference in float32 on CPU to avoid slow_conv2d_cpu error
+            seq = seq.float()
+            static_t = static_t.float()
             logits = model(seq, static_t)["logits"].squeeze(-1)
             logits = logits.float() / temperature
             batch_prob = torch.sigmoid(logits).cpu().numpy()

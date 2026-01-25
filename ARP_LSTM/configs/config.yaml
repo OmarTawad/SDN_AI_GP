@@ -37,7 +37,7 @@ training:
     learning_rate: 0.0005
     weight_decay: 0.01
     grad_clip: 1.0
-    bce_pos_weight: 3.0
+    bce_pos_weight: 1000.0
     early_stopping_patience: 6
     precision_mode: autocast
     max_train_batches: null

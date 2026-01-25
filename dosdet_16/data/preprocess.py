@@ -68,7 +68,9 @@ def preprocess(cfg: dict, pcaps_glob, labels_csv: str):
     # Streaming state
     shard_id = 0
     shard_path = None
+    shard_writer = None
     bytes_in_buffer = 0
+    bytes_written_in_shard = 0
 
     # Batch buffers (to keep memory bounded)
     BATCH_ROWS = 5000
@@ -77,20 +79,91 @@ def preprocess(cfg: dict, pcaps_glob, labels_csv: str):
     def _estimate_row_bytes(seq_list, static_list) -> int:
         return (len(seq_list) + len(static_list)) * 4 + 256  # float32 bytes rough estimate
 
+    # Writer selection (default to fastparquet to avoid CPU instruction issues)
+    engine_pref = os.environ.get("DOSDET_PARQUET_ENGINE", "csv").lower()
+    use_csv = engine_pref == "csv"
+    use_pyarrow = engine_pref == "pyarrow"
+
+    # Arrow schema (list columns for seq/static)
+    # Lazy load pyarrow to avoid illegal instruction on import
+    schema = None
+    if not use_csv:
+        try:
+            import pyarrow as pa
+            schema = pa.schema([
+                ("file", pa.string()),
+                ("t0", pa.float64()),
+                ("t1", pa.float64()),
+                ("y", pa.int32()),
+                ("fam", pa.int32()),
+                ("M", pa.int32()),
+                ("K_seq", pa.int32()),
+                ("K_static", pa.int32()),
+                ("seq", pa.list_(pa.float32())),
+                ("static", pa.list_(pa.float32())),
+            ])
+        except ImportError:
+            schema = None
+
+    def _open_new_shard():
+        nonlocal shard_id, shard_writer, shard_path, bytes_written_in_shard
+        ext = "csv" if use_csv else "parquet"
+        shard_path = os.path.join(cache_dir, f"shard_{shard_id:05d}.{ext}")
+        shard_writer = None
+        if not use_csv:
+             if use_pyarrow:
+                 import pyarrow.parquet as pq
+                 shard_writer = pq.ParquetWriter(shard_path, schema, compression="zstd")
+        bytes_written_in_shard = 0
+        shard_id += 1
+
     def _flush_shard():
-        nonlocal shard_id, shard_path, bytes_in_buffer
+        nonlocal shard_id, shard_path, shard_writer, bytes_in_buffer, bytes_written_in_shard
         if not buf["file"]:
             return
-        shard_path = os.path.join(cache_dir, f"shard_{shard_id:05d}.parquet")
-        shard_id += 1
+
         df = pd.DataFrame(buf)
-        df.to_parquet(
-            shard_path,
-            engine="fastparquet",
-            compression="zstd",
-            index=False,
-        )
-        manifest["files"].append({"path": shard_path})
+
+        # If we're using pyarrow and the current shard is full, close it and open a new one
+        if shard_writer and bytes_written_in_shard >= shard_max_mb * 1024 * 1024:
+            shard_writer.close()
+            manifest["files"].append({"path": shard_path})
+            _open_new_shard()
+
+        if use_csv:
+            # Initialize shard if needed (FIX FOR TYPE ERROR)
+            if shard_path is None:
+                _open_new_shard()
+
+            # Append to CSV, create header ONLY if file is empty
+            header = not os.path.exists(shard_path) or os.path.getsize(shard_path) == 0
+            df.to_csv(shard_path, mode="a", header=header, index=False)
+            bytes_written_in_shard = os.path.getsize(shard_path)
+        elif use_pyarrow:
+            if shard_writer is None: # First time, or after a full shard was closed
+                _open_new_shard()
+            table = pa.Table.from_pandas(df, schema=schema, preserve_index=False)
+            shard_writer.write_table(table)
+            bytes_written_in_shard += table.nbytes
+        else: # fastparquet
+            # fastparquet doesn't support appending, so we write a new file each time
+            # and rely on the shard_max_mb to trigger a new file.
+            # If the current shard_path is already written to, we need a new one.
+            if shard_path is None or bytes_written_in_shard >= shard_max_mb * 1024 * 1024:
+                _open_new_shard()
+            df.to_parquet(
+                shard_path,
+                engine="fastparquet",
+                compression="zstd",
+                index=False,
+            )
+            bytes_written_in_shard = os.path.getsize(shard_path) # Actual size of the file
+        
+        # If not using pyarrow, and we just wrote a full shard, add to manifest and reset
+        if not use_pyarrow and bytes_written_in_shard >= shard_max_mb * 1024 * 1024:
+            manifest["files"].append({"path": shard_path})
+            shard_path = None # Force new shard on next flush
+
         with open(manifest_path, "w") as f:
             json.dump(manifest, f, indent=2)
         for k in buf:
@@ -104,8 +177,26 @@ def preprocess(cfg: dict, pcaps_glob, labels_csv: str):
     # Per-file loop
     for p in tqdm(files, desc="PCAP files", unit="file"):
         base = os.path.basename(p)
-        windows = iter_windows(iter_rows_from_pcap(p, ssdp_v4, ssdp_v6), W, S, M)
-        for (t0, t1, win_rows, bins) in tqdm(windows, desc=f"Windows: {base}", unit="win", leave=False):
+        byte_limit = cfg.get("preprocess", {}).get("byte_limit", None)
+        
+        # Explicitly check if file is readable to catch broken symlinks early
+        try:
+            with open(p, 'rb'): pass
+        except Exception as e:
+            print(f"[WARN] Skipping unreadable file {p}: {e}")
+            continue
+
+        windows = iter_windows(iter_rows_from_pcap(p, ssdp_v4, ssdp_v6, byte_limit=byte_limit), W, S, M)
+            
+        limit = int(cfg.get("preprocess", {}).get("limit", 0))
+        total_windows = 0
+        
+        pbar = tqdm(windows, desc=f"Windows: {base}", unit="win", leave=False)
+        for (t0, t1, win_rows, bins) in pbar:
+            if limit > 0:
+                pbar.set_postfix(valid=f"{total_windows}/{limit}")
+            if limit > 0 and total_windows >= limit:
+                 break
             if not win_rows:
                 continue
             seq_np, extras = compute_sequence_features(win_rows, bins, M, top_ports)
@@ -127,22 +218,41 @@ def preprocess(cfg: dict, pcaps_glob, labels_csv: str):
             buf["M"].append(int(M))
             buf["K_seq"].append(int(seq_np.shape[1]))
             buf["K_static"].append(int(static_vec.size))
+            buf["seq"].append(seq_np.astype(np.float32).reshape(-1))
+            buf["static"].append(static_vec.astype(np.float32))
 
-            seq_list = seq_np.astype(np.float32).reshape(-1).tolist()
-            static_list = static_vec.astype(np.float32).tolist()
-            buf["seq"].append(seq_list)
-            buf["static"].append(static_list)
-            bytes_in_buffer += _estimate_row_bytes(seq_list, static_list)
+            total_windows += 1
 
-            # Flush by batch size or size threshold
-            if len(buf["file"]) >= BATCH_ROWS or bytes_in_buffer >= shard_max_mb * 1024 * 1024:
+            # Flush by batch size
+            if len(buf["file"]) >= BATCH_ROWS:
                 _flush_shard()
+
+            # Rotate shard if size exceeds limit
+            if bytes_written_in_shard >= shard_max_mb * 1024 * 1024:
+                # finalize current shard
+                if shard_writer and hasattr(shard_writer, "close"):
+                    shard_writer.close()
+                manifest["files"].append({"path": shard_path})
+                # persist manifest incrementally (crash-safe)
+                with open(manifest_path, "w") as f:
+                    json.dump(manifest, f, indent=2)
+                # open next shard
+                _open_new_shard()
 
         # end file loop
 
     # Flush any trailing rows
+    # Flush any trailing rows
     if buf["file"]:
         _flush_shard()
+
+    # Close last shard
+    if shard_writer and hasattr(shard_writer, "close"):
+        shard_writer.close()
+        manifest["files"].append({"path": shard_path})
+    elif not use_pyarrow and shard_path and os.path.exists(shard_path) and os.path.getsize(shard_path) > 0:
+         # fastparquet/csv case: file is already written, just need to record it
+         manifest["files"].append({"path": shard_path})
 
     with open(manifest_path, "w") as f:
         json.dump(manifest, f, indent=2)
@@ -158,8 +268,19 @@ def main():
         help="Optional glob override(s); pass one or more patterns. Defaults to config preprocess.pcaps_glob",
     )
     ap.add_argument("--labels", default=None, help="Optional labels.csv override; defaults to config preprocess.labels_csv")
+    ap.add_argument("--limit", type=int, default=0, help="Limit number of windows to process per file")
+    ap.add_argument("--limit-mb", type=float, default=0, help="Limit processing to N megabytes of data per file")
     args = ap.parse_args()
     cfg = yaml.safe_load(open(args.config))
+
+    if args.limit > 0: 
+        print(f"[INFO] Limiting to {args.limit} windows per file.")
+        cfg["preprocess"]["limit"] = args.limit
+
+    if args.limit_mb > 0:
+        print(f"[INFO] Limiting to {args.limit_mb} MB per file.")
+        cfg["preprocess"]["byte_limit"] = int(args.limit_mb * 1024 * 1024)
+    
     pcaps = args.pcaps or cfg["preprocess"]["pcaps_glob"]
     labels = args.labels or cfg["preprocess"]["labels_csv"]
     preprocess(cfg, pcaps, labels)

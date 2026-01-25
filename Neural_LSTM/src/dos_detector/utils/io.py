@@ -12,15 +12,14 @@ import joblib
 import numpy as np
 import pandas as pd
 
-try:  # pragma: no cover - optional dependency
-    import pyarrow.parquet as pq
-except ImportError:  # pragma: no cover
-    pq = None  # type: ignore
+# try:  # pragma: no cover - optional dependency
+#     import pyarrow.parquet as pq
+# except ImportError:  # pragma: no cover
+#     pq = None  # type: ignore
 
 ALLOW_PARQUET = os.getenv("DOS_ENABLE_PARQUET") == "1"
 PARQUET_EXTENSIONS = {".parquet", ".pqt"}
 CSV_EXTENSIONS = {".csv"}
-
 
 def ensure_dir(path: Path) -> None:
     """Ensure that a directory exists."""
@@ -39,6 +38,7 @@ def save_json(path: Path, payload: Dict[str, Any]) -> None:
 def load_json(path: Path) -> Dict[str, Any]:
     """Load a JSON dictionary."""
 
+    path = Path(path).resolve()
     with path.open("r", encoding="utf-8") as handle:
         return json.load(handle)
 
@@ -94,8 +94,11 @@ def stream_dataframe(path: Path, columns: Sequence[str] | None = None, chunk_siz
             raise RuntimeError(
                 f"Parquet streaming is disabled. Convert {path} to CSV or enable DOS_ENABLE_PARQUET."
             )
-        if pq is None:
-            raise ImportError("PyArrow is required for Parquet streaming but is not installed.")
+        try:
+            import pyarrow.parquet as pq
+        except ImportError:
+             raise ImportError("PyArrow is required for Parquet streaming but is not installed.")
+
         parquet = pq.ParquetFile(path)
         for batch in parquet.iter_batches(batch_size=chunk_size, columns=columns):
             yield batch.to_pandas()

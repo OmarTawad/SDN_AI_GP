@@ -211,6 +211,10 @@ def _evaluate(
     except ValueError:
         metrics["roc_auc"] = None
 
+    # try:
+    #     torch.set_num_interop_threads(1)
+    # except (AttributeError, RuntimeError):
+    #     pass
     cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
     report = classification_report(y_true, y_pred, labels=[0, 1], target_names=["normal", "attack"], zero_division=0)
     metrics.update({"threshold": threshold, "temperature": temperature, "samples": int(len(y_true)), "positives": int(y_true.sum())})

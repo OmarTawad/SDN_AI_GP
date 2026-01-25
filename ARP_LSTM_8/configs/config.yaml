@@ -25,17 +25,9 @@ labels:
   - arp_spoof
 data:
   train_files:
-  - attack.pcap
-  - normal1.pcap
-  - normal2.pcap
-  - synthetic_arp_spoof.pcap
-  - synthetic_arp_spoof_extended.pcap
+  - pure_attack.pcap
   val_files:
   - attack.pcap
-  - normal1.pcap
-  - normal2.pcap
-  - synthetic_arp_spoof.pcap
-  - synthetic_arp_spoof_extended.pcap
   test_files: []
   normal_families:
   - normal

@@ -78,7 +78,7 @@ class SupervisedTrainer:
         transformed: List[pd.DataFrame] = []
         for frame in frames:
             frame = frame.copy()
-            frame[self.feature_columns] = scaler.transform(frame[self.feature_columns])
+            frame[self.feature_columns] = scaler.transform(frame[self.feature_columns].values)
             transformed.append(frame)
         return transformed
 

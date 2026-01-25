@@ -29,6 +29,7 @@ def save_json(path: Path, payload: Dict[str, Any]) -> None:
 def load_json(path: Path) -> Dict[str, Any]:
     """Load a JSON dictionary."""
 
+    path = Path(path).resolve()
     with path.open("r", encoding="utf-8") as handle:
         return json.load(handle)
 
@@ -37,7 +38,12 @@ def save_dataframe(path: Path, frame: pd.DataFrame) -> None:
     """Persist a dataframe to Parquet."""
 
     ensure_dir(path.parent)
-    frame.to_parquet(path, index=False)
+    engine = os.environ.get("ARP_LSTM_PARQUET_ENGINE", "fastparquet").lower()
+    if engine == "auto":
+        # let pandas decide (usually pyarrow)
+        frame.to_parquet(path, index=False)
+    else:
+        frame.to_parquet(path, index=False, engine=engine)
 
 
 def load_dataframe(path: Path) -> pd.DataFrame:

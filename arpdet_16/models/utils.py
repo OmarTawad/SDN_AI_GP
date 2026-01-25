@@ -15,10 +15,17 @@ def seed_everything(seed: int = 1337):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
+    if os.environ.get("CUDA_VISIBLE_DEVICES", "") not in ("", "-1"):
+        try:
+            if torch.cuda.is_available():
+                torch.cuda.manual_seed_all(seed)
+        except Exception:
+            pass
     os.environ["PYTHONHASHSEED"] = str(seed)
 
 def get_device(pref: str = "auto") -> torch.device:
+    if os.environ.get("CUDA_VISIBLE_DEVICES", "") in ("", "-1"):
+        return torch.device("cpu")
     if pref == "cuda" or (pref == "auto" and torch.cuda.is_available()):
         return torch.device("cuda")
     if pref == "mps" or (pref == "auto" and getattr(torch.backends, "mps", None) and torch.backends.mps.is_available()):

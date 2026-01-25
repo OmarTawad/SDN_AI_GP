@@ -37,7 +37,11 @@ def test_end_to_end_training(tmp_path):
     config.data.train_files = ["synthetic.pcap"]
     config.data.val_files = ["synthetic.pcap"]
     config.data.test_files = []
+<<<<<<< HEAD
+    feature_columns = ["packet_rate", "byte_rate", "ssdp_share"]
+=======
     feature_columns = ["pkts_per_s", "bytes_per_s", "udp_1900_fraction"]
+>>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
     frame = pd.DataFrame(
         {
             "pcap": ["synthetic.pcap"] * 4,
@@ -47,9 +51,15 @@ def test_end_to_end_training(tmp_path):
             "attack": [0, 0, 1, 1],
             "family": ["normal", "normal", "ssdp", "ssdp"],
             "family_index": [0, 0, 1, 1],
+<<<<<<< HEAD
+            "packet_rate": [0.1, 0.2, 5.0, 7.5],
+            "byte_rate": [100.0, 120.0, 900.0, 1100.0],
+            "ssdp_share": [0.0, 0.0, 0.8, 0.9],
+=======
             "pkts_per_s": [0.1, 0.2, 5.0, 7.5],
             "bytes_per_s": [100.0, 120.0, 900.0, 1100.0],
             "udp_1900_fraction": [0.0, 0.0, 0.85, 0.92],
+>>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
         }
     )
     target = config.paths.processed_dir / "synthetic.parquet"

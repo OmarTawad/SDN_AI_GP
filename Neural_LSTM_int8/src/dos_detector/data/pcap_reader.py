@@ -125,7 +125,7 @@ def _capinfos_count(path: Path) -> Optional[int]:
             return int(digits) if digits else None
     return None
 
-def read_pcap(path: Path, limit: Optional[int] = None) -> List[PacketRecord]:
+def read_pcap(path: Path, limit: Optional[int] = None, byte_limit: Optional[int] = None) -> List[PacketRecord]:
     packets: List[PacketRecord] = []
     reader = RawPcapReader(str(path))
     try:
@@ -133,9 +133,17 @@ def read_pcap(path: Path, limit: Optional[int] = None) -> List[PacketRecord]:
         it = enumerate(reader)
         if total:
             it = progress(it, total=total, desc=f"Reading {path.name}", unit="pkt", leave=False)
+        
+        accumulated_bytes = 0
         for index, (data, meta) in it:
             if limit is not None and index >= limit:
                 break
+            
+            if byte_limit is not None:
+                accumulated_bytes += len(data)
+                if accumulated_bytes > byte_limit:
+                    break
+
             ts = _timestamp_from_meta(meta)
             rec = _decode_packet(data, ts)
             if rec is not None:

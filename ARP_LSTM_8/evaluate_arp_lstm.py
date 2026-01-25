@@ -169,9 +169,9 @@ def main() -> None:
     files = _resolve_split_files(config, manifest, args.split)
     scaler = load_joblib(config.paths.scaler_path)
     loader = _build_loader(config, files, feature_columns, scaler, args.batch_size)
-    if not torch.cuda.is_available():
-        raise RuntimeError("CUDA device required for int8-quantized evaluation.")
-    device = torch.device("cuda")
+    # if not torch.cuda.is_available():
+    #     raise RuntimeError("CUDA device required for int8-quantized evaluation.")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     checkpoint = _find_checkpoint(config, args.checkpoint)
     model = _load_model(config, checkpoint, feature_columns, device)
 
