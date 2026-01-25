@@ -74,6 +74,11 @@ def _resolve_feature_columns(manifest_path: Path, frame_columns: Sequence[str]) 
 def _scale_features(feature_matrix: np.ndarray, scaler_path: Path) -> tuple[np.ndarray, str]:
     if scaler_path.is_file():
         scaler = load_joblib(scaler_path)
+        expected = getattr(scaler, "n_features_in_", None)
+        if expected is not None and int(expected) != int(feature_matrix.shape[1]):
+            raise ValueError(
+                f"Scaler expects {expected} features but got {feature_matrix.shape[1]}."
+            )
         scaled = scaler.transform(feature_matrix).astype(np.float32, copy=False)
         return scaled, "loaded"
 
@@ -86,16 +91,45 @@ def _scale_features(feature_matrix: np.ndarray, scaler_path: Path) -> tuple[np.n
     return scaled, "fitted"
 
 
-def _load_model(cfg, feature_columns: Sequence[str], device: torch.device) -> SequenceClassifier:
+def _load_model(
+    cfg,
+    feature_columns: Sequence[str],
+    device: torch.device,
+    state: Dict[str, Any] | None = None,
+) -> SequenceClassifier:
     model = SequenceClassifier(
         input_size=len(feature_columns),
         num_attack_types=len(cfg.labels.family_mapping),
         config=cfg.model.supervised,
     ).to(device)
-    state = torch.load(cfg.paths.supervised_model_path, map_location=device)
+    if state is None:
+        state = torch.load(cfg.paths.supervised_model_path, map_location=device)
     model.load_state_dict(state)
     model.eval()
     return model
+
+
+def _expected_feature_count(state: Dict[str, Any]) -> int | None:
+    for key in ("rnn.weight_ih_l0", "rnn.weight_ih_l0_reverse"):
+        weight = state.get(key)
+        if weight is not None:
+            return int(weight.shape[1])
+    return None
+
+
+def _align_feature_columns(
+    feature_columns: Sequence[str],
+    expected_count: int | None,
+) -> Sequence[str]:
+    if expected_count is None:
+        return list(feature_columns)
+    if len(feature_columns) == expected_count:
+        return list(feature_columns)
+    if len(feature_columns) < expected_count:
+        raise ValueError(
+            f"Need {expected_count} features to match the checkpoint, but only {len(feature_columns)} were extracted."
+        )
+    return list(feature_columns)[:expected_count]
 
 
 def _iter_windows(pcap_path: Path, window_sec: float, hop_sec: float) -> Iterator[Window]:
@@ -261,10 +295,6 @@ def main() -> None:
         raise FileNotFoundError(f"PCAP not found: {args.pcap}")
 
     cfg = load_config(args.config)
-    manifest = load_json(cfg.paths.manifest_path)
-    feature_columns = manifest.get("feature_columns") or []
-    if not feature_columns:
-        raise ValueError(f"Manifest missing feature_columns → {cfg.paths.manifest_path}")
 
     device = torch.device("cpu")
     configure_cpu_environment(threads=2, interop_threads=1)
@@ -287,16 +317,39 @@ def main() -> None:
     if frame.empty:
         raise ValueError("Feature frame is empty for inferred windows.")
 
+    state = torch.load(cfg.paths.supervised_model_path, map_location="cpu")
+    expected_count = _expected_feature_count(state)
+
     feature_columns = _resolve_feature_columns(cfg.paths.manifest_path, frame.columns)
-    feature_matrix = frame.loc[:, feature_columns].to_numpy(dtype=np.float32, copy=True)
-    scaled, scaler_source = _scale_features(feature_matrix, cfg.paths.scaler_path)
-    if scaler_source != "loaded":
+    original_count = len(feature_columns)
+    feature_columns = _align_feature_columns(feature_columns, expected_count)
+    if expected_count is not None and original_count != expected_count:
         print(
-            f"Warning: scaler missing at {cfg.paths.scaler_path}, using {scaler_source} scaling.",
+            f"Warning: extracted {original_count} features; truncating to {expected_count} to match the checkpoint.",
             file=sys.stderr,
         )
+    if expected_count is not None and len(feature_columns) != expected_count:
+        raise ValueError("Feature alignment failed; expected input size mismatch persists.")
 
-    model = _load_model(cfg, feature_columns, device)
+    feature_matrix = frame.loc[:, feature_columns].to_numpy(dtype=np.float32, copy=True)
+    try:
+        scaled, scaler_source = _scale_features(feature_matrix, cfg.paths.scaler_path)
+        if scaler_source != "loaded":
+            print(
+                f"Warning: scaler missing at {cfg.paths.scaler_path}, using {scaler_source} scaling.",
+                file=sys.stderr,
+            )
+    except ValueError as exc:
+        if StandardScaler is None:
+            scaled = feature_matrix.astype(np.float32, copy=False)
+            scaler_source = "identity"
+        else:
+            scaler = StandardScaler()
+            scaled = scaler.fit_transform(feature_matrix).astype(np.float32, copy=False)
+            scaler_source = "fitted"
+        print(f"Warning: {exc} Falling back to {scaler_source} scaling.", file=sys.stderr)
+
+    model = _load_model(cfg, feature_columns, device, state=state)
     tensor = torch.from_numpy(scaled).to(device).unsqueeze(0)
 
     infer_start = time.perf_counter()
