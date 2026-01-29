@@ -174,8 +174,19 @@ class FeaturePipeline:
         ensure_dir(out_dir)
         paths = [Path(p) for p in pcaps]
 
-        frames_meta: List[Dict[str, object]] = []
-        feature_cols: List[str] = []
+        # Load existing manifest if possible to perform incremental update
+        existing_manifest = {}
+        if self.config.paths.manifest_path.exists():
+            try:
+                existing_manifest = load_json(self.config.paths.manifest_path)
+            except Exception:
+                pass
+
+        frames_meta: List[Dict[str, object]] = existing_manifest.get("frames", [])
+        feature_cols: List[str] = existing_manifest.get("feature_columns", [])
+        
+        # Create a map for easy updates by filename
+        frames_map = {m["pcap"]: m for m in frames_meta}
 
         for idx, p in enumerate(progress(paths, desc="Extracting", unit="pcap"), 1):
             try:
@@ -189,12 +200,17 @@ class FeaturePipeline:
 
                 save_dataframe(out_dir / f"{p.stem}.parquet", df)
                 self.save_last_host_maps(p, out_dir)
-                frames_meta.append({
+                
+                new_meta = {
                     "pcap": p.name,
                     "rows": int(len(df)),
                     "packet_count": int(meta.packet_count),
                     "duration": float(meta.duration),
-                })
+                }
+                
+                # Update map (overwrite existing or add new)
+                frames_map[p.name] = new_meta
+                
                 print(f"<-- ({idx}/{len(paths)}) {p.name}: saved ({len(df)} rows)", flush=True)
                 gc.collect()
 
@@ -202,6 +218,8 @@ class FeaturePipeline:
                 print(f"[SKIP] {p.name}: {e}", flush=True)
                 continue
 
+        # Reconstruct list from map
+        frames_meta = list(frames_map.values())
         save_json(self.config.paths.manifest_path, {"feature_columns": feature_cols, "frames": frames_meta})
         return {"feature_columns": feature_cols, "frames": frames_meta}
 
