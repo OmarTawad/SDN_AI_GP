@@ -82,6 +82,8 @@ class FeaturePipeline:
                 frame["family"] = [x.family for x in labs]
             else:
                 print(f"[PROCESSOR_DEBUG] CSV NOT FOUND: {csv_path.absolute()}")
+                frame["attack"] = 0
+                frame["family"] = self.config.labels.default_family
         else:
             frame["attack"] = 0
             frame["family"] = self.config.labels.default_family
