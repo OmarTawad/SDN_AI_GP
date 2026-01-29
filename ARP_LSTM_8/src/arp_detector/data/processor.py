@@ -67,6 +67,12 @@ class FeaturePipeline:
                 print(f"[PROCESSOR_DEBUG] Looking for: '{pcap_path.name}'")
                 intervals = intervals_map.get(pcap_path.name, [])
                 if not intervals:
+                     # Fallback: try prepending "samples/" as seen in keys
+                     fallback_key = f"samples/{pcap_path.name}"
+                     print(f"[PROCESSOR_DEBUG] '{pcap_path.name}' not found. Trying '{fallback_key}'...")
+                     intervals = intervals_map.get(fallback_key, [])
+
+                if not intervals:
                      print(f"[PROCESSOR_DEBUG] Intervals NOT FOUND for {pcap_path.name}")
                 else:
                      print(f"[PROCESSOR_DEBUG] Found {len(intervals)} intervals for {pcap_path.name}")
