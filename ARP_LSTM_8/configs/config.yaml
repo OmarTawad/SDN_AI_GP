@@ -26,6 +26,10 @@ labels:
 data:
   train_files:
   - pure_attack.pcap
+  - pure_attack2.pcap
+  - synthetic_arp_spoof.pcap
+  - normal1.pcap
+  - normal2.pcap
   val_files:
   - attack.pcap
   test_files: []
