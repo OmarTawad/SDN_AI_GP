@@ -1,0 +1,60 @@
+{
+  "input_dim": 28,
+  "model": {
+    "type": "DenoisingAE",
+    "input_dim": null,
+    "hidden": [
+      128,
+      64,
+      32
+    ],
+    "latent_dim": 16,
+    "activation": "ReLU",
+    "dropout": 0.1,
+    "l2": "1e-5"
+  },
+  "feature_names": [
+    "pkt_count",
+    "byte_count",
+    "pps",
+    "bps",
+    "mean_pkt_len",
+    "std_pkt_len",
+    "min_pkt_len",
+    "max_pkt_len",
+    "mean_iat",
+    "std_iat",
+    "tcp_count",
+    "udp_count",
+    "icmp_count",
+    "tcp_syn",
+    "tcp_ack",
+    "tcp_rst",
+    "tcp_fin",
+    "src_ip_entropy",
+    "dst_ip_entropy",
+    "src_port_entropy",
+    "dst_port_entropy",
+    "unique_src_ips",
+    "unique_dst_ips",
+    "unique_src_ports",
+    "unique_dst_ports",
+    "tcp_ratio",
+    "udp_ratio",
+    "icmp_ratio"
+  ],
+  "log_features": [
+    "pkt_count",
+    "byte_count",
+    "pps",
+    "bps",
+    "tcp_count",
+    "udp_count",
+    "icmp_count",
+    "tcp_syn",
+    "tcp_ack",
+    "tcp_rst",
+    "tcp_fin"
+  ],
+  "config_hash": "6f4c8dc5917b757742165617a38668b0f340005f2acb7ca91fb4d6f3249cb4de"
+}
