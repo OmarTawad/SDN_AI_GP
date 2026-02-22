@@ -2,7 +2,7 @@ seed: 1337
 
 paths:
   cache_dir: cache
-  artifacts_dir: artifacts
+  artifacts_dir: ../dosdet/artifacts
   reports_dir: reports
 
 data:
@@ -50,7 +50,7 @@ training:
   grad_clip: 0.0
 
 quantization:
-  enabled: true
+  enabled: false
   mode: static
   backend: qnnpack
   checkpoint_path: artifacts/model_best_int8_static.pt

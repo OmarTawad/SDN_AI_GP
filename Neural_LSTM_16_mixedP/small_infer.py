@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 # Single-window inference helper for the Neural_LSTM DoS detector.
-# Loads pretrained artifacts, extracts the first 1s window from a PCAP, and reports wall-clock latency.
+# Loads pretrained artifacts, yields windows from a PCAP, and reports wall-clock latency.
 
 import argparse
 import json
@@ -10,7 +10,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Sequence
+from typing import Any, Dict, Sequence, Generator
 
 # Constrain BLAS threads early for small CPU footprints
 os.environ.setdefault("OMP_NUM_THREADS", "2")
@@ -57,40 +57,63 @@ def _load_model(
     feature_columns: Sequence[str],
     device: torch.device,
     torch_dtype: torch.dtype,
+    state: Dict[str, Any],
 ) -> SequenceClassifier:
     model = SequenceClassifier(
         input_size=len(feature_columns),
         num_attack_types=len(cfg.labels.family_mapping),
         config=cfg.model.supervised,
     ).to(device=device, dtype=torch_dtype or DEFAULT_TORCH_DTYPE)
-    state = torch.load(cfg.paths.supervised_model_path, map_location=device)
     model.load_state_dict(state)
     model.eval()
     return model
 
 
-def _first_window(pcap_path: Path, window_sec: float) -> Window:
+def _iter_windows(pcap_path: Path, window_sec: float, max_windows: int) -> Generator[Window, None, None]:
     gen = iter_pcap(pcap_path)
     try:
-        first = next(gen)
-    except StopIteration:
-        gen.close()
-        raise ValueError(f"No packets found in {pcap_path}")
-    start_ts = float(first.timestamp)
-    end_ts = start_ts + float(window_sec)
-    packets = [first]
-    try:
+        try:
+            first = next(gen)
+        except StopIteration:
+            return
+
+        start_ts = float(first.timestamp)
+        current_window_start = start_ts
+        current_window_end = start_ts + window_sec
+        current_packets = [first]
+        
+        count = 0
+        
         for pkt in gen:
-            if float(pkt.timestamp) < end_ts:
-                packets.append(pkt)
-            else:
-                break
+            ts = float(pkt.timestamp)
+            
+            # While packet is beyond current window, yield completed windows and advance
+            while ts >= current_window_end:
+                count += 1
+                yield Window(index=count, start_time=current_window_start, end_time=current_window_end, packets=current_packets)
+                
+                if count >= max_windows:
+                    return
+
+                # Prepare next window
+                current_window_start = current_window_end
+                current_window_end += window_sec
+                current_packets = []
+            
+            # Packet belongs to current window
+            current_packets.append(pkt)
+            
+        # Yield the last incomplete window if we haven't hit limit
+        if current_packets and count < max_windows:
+             count += 1
+             yield Window(index=count, start_time=current_window_start, end_time=current_window_end, packets=current_packets)
+             
     finally:
         gen.close()
-    return Window(index=0, start_time=start_ts, end_time=end_ts, packets=packets)
 
 
-def infer_single_window(
+def infer_window(
+    window: Window,
     pcap_path: Path,
     cfg,
     feature_columns: Sequence[str],
@@ -99,12 +122,12 @@ def infer_single_window(
     device: torch.device,
     torch_dtype: torch.dtype,
     numpy_dtype,
+    extractor: FeatureExtractor,
 ) -> Dict[str, Any]:
-    extractor = FeatureExtractor(cfg.feature, cfg.windowing.window_size)
-    window = _first_window(pcap_path, cfg.windowing.window_size)
+    
     frame = extractor.extract([window])
     if frame.empty:
-        raise ValueError("Feature frame is empty for the first window.")
+         raise ValueError("Feature frame is empty for window.")
 
     row = frame.iloc[0].to_dict()
     feature_vector = np.array([float(row.get(name, 0.0)) for name in feature_columns], dtype=numpy_dtype or DEFAULT_NUMPY_DTYPE)
@@ -119,8 +142,8 @@ def infer_single_window(
         prob = float(torch.sigmoid(outputs.window_logits)[0, 0].item())
         attn_peak = None
         if outputs.attention is not None:
-            weights = outputs.attention[0].detach().cpu().numpy().ravel()
-            attn_peak = int(np.argmax(weights)) if weights.size else None
+             weights = outputs.attention[0].detach().cpu().numpy().ravel()
+             attn_peak = int(np.argmax(weights)) if weights.size else None
 
     threshold = float(cfg.postprocessing.tau_window)
     label = "attack" if prob >= threshold else "normal"
@@ -143,10 +166,11 @@ def infer_single_window(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Single-window inference (Neural_LSTM).")
+    parser = argparse.ArgumentParser(description="Multi-window inference (Neural_LSTM).")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG, help="Path to config.yaml")
-    parser.add_argument("--pcap", type=Path, required=True, help="PCAP file to read (first 1s window only)")
+    parser.add_argument("--pcap", type=Path, required=True, help="PCAP file to read")
     parser.add_argument("--out", type=Path, default=None, help="Optional directory to write a JSON result")
+    parser.add_argument("--num-windows", type=int, default=1, help="Number of windows to process")
     args = parser.parse_args()
 
     if not args.pcap.is_file():
@@ -161,27 +185,63 @@ def main() -> None:
     device = resolve_device()
     if device.type == "cpu":
         configure_cpu_environment(threads=2, interop_threads=1)
+    
     scaler = load_joblib(cfg.paths.scaler_path)
     torch_dtype, numpy_dtype = resolve_precision_mode(getattr(cfg.training.supervised, "precision_mode", None))
     torch_dtype = resolve_torch_dtype(device, torch_dtype)
-    model = _load_model(cfg, feature_columns, device, torch_dtype)
 
-    start = time.perf_counter()
-    result = infer_single_window(args.pcap, cfg, feature_columns, model, scaler, device, torch_dtype, numpy_dtype)
-    result["inference_time_sec"] = round(time.perf_counter() - start, 6)
+    # Load state dict and check for feature dimension mismatch
+    state = torch.load(cfg.paths.supervised_model_path, map_location=device)
+    
+    # Heuristic: check first layer weight size to determine expected input size
+    # LSTM/GRU weight_ih_l0 shape is (hidden_size * X, input_size)
+    if "rnn.weight_ih_l0" in state:
+        expected_cols = state["rnn.weight_ih_l0"].shape[1]
+        if len(feature_columns) > expected_cols:
+            print(f"Warning: extracted {len(feature_columns)} features; truncating to {expected_cols} to match the checkpoint.")
+            feature_columns = feature_columns[:expected_cols]
+            
+            # Truncate scaler to match feature columns
+            if hasattr(scaler, "n_features_in_") and scaler.n_features_in_ > expected_cols:
+                print(f"Warning: Scaler expects {scaler.n_features_in_} features but got {expected_cols}. Falling back to fitted scaling.")
+                scaler.n_features_in_ = expected_cols
+                if hasattr(scaler, "mean_") and scaler.mean_ is not None:
+                    scaler.mean_ = scaler.mean_[:expected_cols]
+                if hasattr(scaler, "scale_") and scaler.scale_ is not None:
+                    scaler.scale_ = scaler.scale_[:expected_cols]
+                if hasattr(scaler, "var_") and scaler.var_ is not None:
+                    scaler.var_ = scaler.var_[:expected_cols]
 
-    print(
-        f"[{args.pcap.name}] label={result['label']} prob={result['prob']} "
-        f"time={result['inference_time_sec']}s packets={result['packets_in_window']} "
-        f"window={result['window_start_iso']} -> {result['window_end_iso']} attn_step={result['attention_peak_step']}"
-    )
+    model = _load_model(cfg, feature_columns, device, torch_dtype, state)
+    
+    extractor = FeatureExtractor(cfg.feature, cfg.windowing.window_size)
+    window_gen = _iter_windows(args.pcap, cfg.windowing.window_size, args.num_windows)
+    
+    results = []
+
+    for i, window in enumerate(window_gen, 1):
+        start = time.perf_counter()
+        try:
+            result = infer_window(window, args.pcap, cfg, feature_columns, model, scaler, device, torch_dtype, numpy_dtype, extractor)
+            result["inference_time_sec"] = round(time.perf_counter() - start, 6)
+            
+            print(
+                f"[{args.pcap.name}] window={i}/{args.num_windows} label={result['label']} prob={result['prob']} "
+                f"time={result['inference_time_sec']}s packets={result['packets_in_window']} "
+                f"window={result['window_start_iso']} -> {result['window_end_iso']} attn_step={result['attention_peak_step']}"
+            )
+            results.append(result)
+        except Exception as e:
+            # Print error but don't crash, keep processing? 
+            # If it's a ValueError, maybe we skip.
+            print(f"[{args.pcap.name}] window={i}/{args.num_windows} Error: {e}")
 
     if args.out:
         args.out.mkdir(parents=True, exist_ok=True)
         base = args.pcap.stem
-        json_path = args.out / f"{base}_single_window.json"
+        json_path = args.out / f"{base}_inference.json"
         with json_path.open("w", encoding="utf-8") as handle:
-            json.dump(result, handle, indent=2)
+            json.dump(results, handle, indent=2)
         print(f"Wrote {json_path}")
 
 
