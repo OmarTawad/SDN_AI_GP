@@ -15,7 +15,6 @@ from torch import Tensor
 from torch.utils.data import IterableDataset
 
 from gateway.core import class_id_to_name
-from gateway.data.datasets.gating import build_unified_gating
 from gateway.data.datasets.labels import coerce_targets_from_cache, infer_label_from_metadata
 
 
@@ -154,7 +153,10 @@ class CachedMoEDataset(IterableDataset[Tuple[Dict[str, Tensor], Tensor]]):
             window_features: Dict[str, Tensor] = {key: tensor[window_idx] for key, tensor in features.items()}
             truncated_flag = window_features.pop("_truncated", None)
             try:
-                window_features.setdefault("gating_input", build_unified_gating(window_features))
+                if "gating_input" not in window_features:
+                    from gateway.data.datasets.gating import build_unified_gating
+
+                    window_features["gating_input"] = build_unified_gating(window_features)
             except Exception as exc:  # pragma: no cover - defensive
                 self.log_fn(f"[SkipWindow] Failed to assemble gating input from cache {path.name}: {exc}")
                 continue
@@ -187,4 +189,3 @@ class CachedMoEDataset(IterableDataset[Tuple[Dict[str, Tensor], Tensor]]):
 
 
 __all__ = ["CachedMoEDataset"]
-

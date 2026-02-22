@@ -1,10 +1,8 @@
-# PCAP DoS Detector
+# SDN AI GP Monorepo
 
-<<<<<<< HEAD
-=======
+This repository contains multiple detector pipelines plus a unified gateway Mixture-of-Experts (MoE) model.
+
 ## Unified install
-
-Install the shared dependencies for every detector from the repo root `pyproject.toml`:
 
 ```bash
 python -m venv .venv
@@ -13,116 +11,87 @@ pip install -U pip
 pip install -e .[all]
 ```
 
->>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
-This repository provides a production-ready pipeline for detecting distributed denial-of-service (DoS) activity in packet capture (PCAP) files. The detector focuses on sequence models (BiLSTM/GRU) and a sequence autoencoder to achieve high recall on known DoS behaviors (SSDP, TCP SYN, ICMP, UDP, HTTP floods) while aggressively controlling false positives on benign captures.
+## Gateway MoE commands
 
-## Highlights
-
-- **Sequence windowing**: fixed-duration packet windows (default 1.0 s) with configurable hop (default 0.5 s) aggregated into multi-minute sequences.
-- **Rich feature engineering**: statistical, structural, and protocol-specific features, including SSDP multicast coverage, SYN surplus, ICMP TTL variance, and rolling change statistics.
-- **Supervised detector**: configurable BiLSTM/GRU backbone with binary and multi-class attack heads plus optional temporal attention.
-- **Sequence autoencoder**: LSTM encoder-decoder trained on normal traffic to surface anomalous behavior via reconstruction error.
-- **Score fusion**: logistic combiner of supervised probabilities, autoencoder anomalies, and plausibility hints with configurable decision gating.
-- **Explainability**: attention weights, SHAP insights for flagged sequences, and rich evaluation reports.
-- **CLI**: Typer-powered workflow for feature extraction, training, and inference. Supports offline PCAP analysis and optional live sniffing via Scapy.
-
-## Repository layout
-
-```
-├── configs/            # YAML configuration files
-├── data/processed/     # Cached features, scalers, manifest files
-├── models/             # Trained weights and calibrators
-├── pcaps/              # Example PCAPs / user-provided captures
-├── reports/            # Evaluation artifacts and inference outputs
-├── scripts/            # Utility scripts (calibration, report helpers)
-├── src/dos_detector/   # Source package
-└── tests/              # Pytest-based regression and smoke tests
-```
-
-## Quick start
-
-1. **Install dependencies** (Python 3.10+ recommended):
-
-   ```bash
-   python -m venv .venv
-   source .venv/bin/activate
-<<<<<<< HEAD
-   pip install .[dev]
-=======
-   pip install .[all]
->>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
-   ```
-
-2. **Extract features** from PCAPs (labels optional):
-
-   ```bash
-   dos-detector extract-features --pcaps "pcaps/*.pcap" --out data/processed/
-   ```
-
-3. **Train models** using the default configuration:
-
-   ```bash
-   dos-detector train-supervised --config configs/config.yaml
-   dos-detector train-ae --config configs/config.yaml
-   dos-detector calibrate-fusion --config configs/config.yaml
-   ```
-
-4. **Infer on new captures**:
-
-   ```bash
-   dos-detector infer --pcap path/to/capture.pcap --out reports/prediction.json
-   ```
-
-5. **Batch inference** over a directory:
-
-   ```bash
-   dos-detector batch-infer --pcaps "pcaps/*.pcap" --out reports/
-   ```
-
-## Identify suspicious actors from feature CSVs
-
-Use the PyTorch-based CLI to run anomaly scoring on pre-extracted features and surface the most suspicious MAC/IP actors:
+### 1) MoE health check
 
 ```bash
-python scripts/detect_and_identify.py \
-  --csv samples/example_extracted_features.csv \
-  --model-path models/dosnet_best.pt \
-  --scaler-path models/scaler.joblib \
-  --batch-size 8192 \
-  --alpha-model 0.6 \
-  --alpha-behavior 0.4 \
-  --window-sec 5 \
-  --min-windows 2 \
-  --window-score-threshold 0.6 \
-  --mac-score-thresh 0.7 \
-  --device cpu
+python3 -m py_compile \
+  gateway/moe_model.py \
+  gateway/models/unified_moe.py \
+  gateway/train_moe.py \
+  gateway/infer_moe.py \
+  gateway/eval_moe.py
+
+python3 -c "from gateway.models.unified_moe import build_unified_moe; print('ok')"
+python3 -m pytest -q gateway/tests
 ```
 
-The command prints a ranked table of actors, saves CSV/JSON summaries under `results/`, and emits an additional `results/identify_summary.json` bundle for downstream automation.
-
-## Configuration
-
-All tunable parameters (window size, hop, feature toggles, model dimensions, training hyperparameters, gating thresholds) live in `configs/config.yaml`. Edit the YAML or supply overrides via environment variables to adapt to new datasets or operational requirements.
-
-<<<<<<< HEAD
-=======
-## Dynamic SDN note
-
-The unified install intentionally excludes the dynamic SDN/Mininet/Ryu tooling. Install those separately if you need the live SDN harness.
-
->>>>>>> b68ee83a7fee0eedac05e6edce1d1c740b008aa7
-## Tests
-
-Unit tests validate feature extraction, labeling, deterministic seeding, and smoke coverage for the CLI. Run them with:
+### 2) Optional cache build (recommended before full eval)
 
 ```bash
-pytest
+python3 gateway/preprocess_pcaps.py \
+  --tasks dos,arp \
+  --batch-size 64 \
+  --max-windows-per-file 0 \
+  --max-total-windows 0 \
+  --num-threads 2
 ```
 
-## Reports
+### 3) Global eval (full)
 
-Evaluation summaries, calibration tables, and per-PCAP explanations are written into the `reports/` directory. This includes confusion matrices, per-family metrics, and top false-positive/false-negative analyses.
+```bash
+python3 gateway/eval_moe.py \
+  --checkpoint gateway/unified_moe.pt \
+  --split test \
+  --seed 17 \
+  --batch-size 64 \
+  --use-cache auto \
+  --max-windows-per-file 0 \
+  --max-total-windows 0 \
+  --output-dir gateway/eval
+```
 
-## License
+### 4) Fast smoke eval
 
-This project is provided without a formal license for internal evaluation.
+```bash
+python3 gateway/eval_moe.py \
+  --checkpoint gateway/unified_moe.pt \
+  --split test \
+  --seed 17 \
+  --batch-size 32 \
+  --use-cache auto \
+  --max-windows-per-file 20 \
+  --max-total-windows 500 \
+  --output-dir gateway/eval_smoke
+```
+
+## Global eval output contract
+
+`gateway/eval_moe.py` writes:
+
+- `metrics.json`
+- `confusion_matrix.npy`
+- `classification_report.txt`
+
+`metrics.json` schema:
+
+```json
+{
+  "accuracy": 0.7548724439638222,
+  "precision": 0.8658096246031252,
+  "recall": 0.8308503408980592,
+  "f1": 0.8479698187984681,
+  "roc_auc": 0.6436470326608363,
+  "threshold": 0.904118537902832,
+  "temperature": 1.9090687036514282,
+  "samples": 162752,
+  "positives": 133911
+}
+```
+
+## Notes
+
+- Binary report target is `attack vs normal` where positive = `dos` or `arp`.
+- If `--temperature` or `--threshold` are omitted, they are fitted on validation windows.
+- Split assignment is deterministic file-level (seeded) using files from `samples/labels.csv`.
