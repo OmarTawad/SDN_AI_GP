@@ -28,6 +28,7 @@ class InferenceArgs:
     high_confidence_threshold: float
     min_high_confidence_windows: int
     min_attack_windows: int
+    log_windows: bool
 
 
 def parse_args(argv: Sequence[str] | None = None) -> InferenceArgs:
@@ -82,6 +83,11 @@ def parse_args(argv: Sequence[str] | None = None) -> InferenceArgs:
         default=50,
         help="Minimum attack windows for promotion.",
     )
+    parser.add_argument(
+        "--log-windows",
+        action="store_true",
+        help="Print one attack/normal log line per processed window.",
+    )
     namespace = parser.parse_args(argv)
     max_windows = namespace.max_windows if namespace.max_windows > 0 else None
     return InferenceArgs(
@@ -96,6 +102,7 @@ def parse_args(argv: Sequence[str] | None = None) -> InferenceArgs:
         high_confidence_threshold=float(namespace.high_confidence_threshold),
         min_high_confidence_windows=int(namespace.min_high_confidence_windows),
         min_attack_windows=int(namespace.min_attack_windows),
+        log_windows=bool(namespace.log_windows),
     )
 
 

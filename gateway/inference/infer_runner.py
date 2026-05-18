@@ -21,6 +21,7 @@ from .dataloader import build_dataloader
 from .model_loader import load_model
 from .reporting import (
     build_json_summary,
+    format_window_log,
     format_verdict_banner,
     write_json_summary,
     write_window_csv,
@@ -105,8 +106,8 @@ def run(args: InferenceArgs) -> None:
     predictions: List[int] = []
     probability_vectors: List[Sequence[float]] = []
 
-    window_offset = 0
     processed_windows = 0
+    stop_processing = False
     with torch.no_grad():
         for batch_features, _ in dataloader:
             logits, attention = model(batch_features, return_attention=True)
@@ -115,7 +116,10 @@ def run(args: InferenceArgs) -> None:
             weights = attention["weights"].cpu()
 
             for idx in range(preds.size(0)):
-                window_index = window_offset + idx + 1
+                if args.max_windows is not None and processed_windows >= args.max_windows:
+                    stop_processing = True
+                    break
+                window_index = processed_windows + 1
                 probability_vector = probs[idx].tolist()
                 gating_weights = weights[idx].tolist()
                 row = _build_window_row(window_index, int(preds[idx].item()), probability_vector, gating_weights)
@@ -123,10 +127,22 @@ def run(args: InferenceArgs) -> None:
                 predictions.append(int(preds[idx].item()))
                 probability_vectors.append(probability_vector)
                 processed_windows += 1
-                _render_progress(processed_windows, probability_vector)
-            window_offset += preds.size(0)
+                if args.log_windows:
+                    print(
+                        format_window_log(
+                            pcap_name=args.pcap.name,
+                            window_index=window_index,
+                            prediction=class_id_to_name(int(preds[idx].item())),
+                            probabilities=probability_vector,
+                            total_windows=args.max_windows,
+                        )
+                    )
+                else:
+                    _render_progress(processed_windows, probability_vector)
+            if stop_processing:
+                break
 
-    if processed_windows:
+    if processed_windows and not args.log_windows:
         sys.stdout.write("\n")
 
     aggregation: AggregationSummary = aggregate_predictions(

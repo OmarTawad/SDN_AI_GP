@@ -28,6 +28,38 @@ class WindowRecord:
     gating_weights: Sequence[float]
 
 
+def binary_label_for_prediction(prediction: str) -> tuple[str, str | None]:
+    """Collapse MoE class predictions to a binary attack/normal label."""
+
+    if prediction == "normal":
+        return "normal", None
+    return "attack", prediction
+
+
+def format_window_log(
+    pcap_name: str,
+    window_index: int,
+    prediction: str,
+    probabilities: Sequence[float],
+    total_windows: int | None = None,
+) -> str:
+    """Format a small-infer-style per-window console log line."""
+
+    binary_label, attack_type = binary_label_for_prediction(prediction)
+    window_progress = f"{window_index}"
+    if total_windows is not None:
+        window_progress = f"{window_index}/{total_windows}"
+
+    parts = [f"[{pcap_name}] window={window_progress}", f"label={binary_label}"]
+    if attack_type:
+        parts.append(f"attack_type={attack_type}")
+    parts.extend(
+        f"P({class_name})={float(probabilities[idx]):.2f}"
+        for idx, class_name in enumerate(CLASS_LABELS)
+    )
+    return " ".join(parts)
+
+
 def write_window_csv(path: Path, headers: Sequence[str], rows: Iterable[Sequence[str]]) -> None:
     """Persist per-window predictions to CSV.
 
@@ -147,8 +179,10 @@ def format_verdict_banner(
 
 
 __all__ = [
+    "binary_label_for_prediction",
     "WindowRecord",
     "build_json_summary",
+    "format_window_log",
     "format_verdict_banner",
     "write_json_summary",
     "write_window_csv",
