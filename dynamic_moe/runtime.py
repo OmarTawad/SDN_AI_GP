@@ -40,6 +40,20 @@ PACKET_HEADERS = [
     "score",
 ]
 
+MITIGATION_HEADERS = [
+    "timestamp",
+    "switch",
+    "class",
+    "confidence",
+    "src_mac",
+    "dst_mac",
+    "src_ip",
+    "dst_ip",
+    "action",
+    "expiry",
+    "reason",
+]
+
 
 class RuntimeLogger:
     """Filesystem-backed logger that mirrors controller + MoE decisions."""
@@ -163,6 +177,7 @@ class RuntimeLogger:
             "score": inference.get("score"),
             "probabilities": inference.get("probabilities"),
             "expert_votes": inference.get("expert_votes"),
+            "expert_weights": inference.get("expert_weights"),
             "window_index": context.get("window_index"),
             "window_start": context.get("start_time"),
             "window_end": context.get("end_time"),
@@ -177,6 +192,33 @@ class RuntimeLogger:
                 self._pcap_writer.write(pkt)
             except Exception:
                 pass
+
+    def log_mitigation(
+        self,
+        packet_meta: Mapping[str, object],
+        inference: Mapping[str, object],
+        action: str,
+        expiry: str | None = None,
+        reason: str | None = None,
+    ) -> None:
+        """Append an auditable SDN mitigation decision."""
+
+        label = inference.get("attack_type") or inference.get("label") or "normal"
+        confidence = float(inference.get("confidence", inference.get("score", 0.0)) or 0.0)
+        row = {
+            "timestamp": self._utc_now(),
+            "switch": packet_meta.get("switch"),
+            "class": label,
+            "confidence": f"{confidence:.4f}",
+            "src_mac": packet_meta.get("src_mac"),
+            "dst_mac": packet_meta.get("dst_mac"),
+            "src_ip": packet_meta.get("src_ip"),
+            "dst_ip": packet_meta.get("dst_ip"),
+            "action": action,
+            "expiry": expiry or "",
+            "reason": reason or "",
+        }
+        self._append_csv(self.config.mitigations_path, MITIGATION_HEADERS, row)
 
     def close(self) -> None:
         """Release file descriptors."""

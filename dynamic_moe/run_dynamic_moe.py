@@ -58,7 +58,7 @@ def _launch_controller(args: argparse.Namespace, runtime_config: RuntimeConfig) 
         return None
     cmd = [
         "ryu-manager",
-        "--ofp-tcp-listen-host",
+        "--ofp-listen-host",
         args.controller_ip,
         "--ofp-tcp-listen-port",
         str(args.controller_port),

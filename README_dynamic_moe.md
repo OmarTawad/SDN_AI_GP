@@ -84,10 +84,11 @@ All dynamic artefacts live under `dynamic_moe_runtime/` (configurable via `dynam
 - `alerts.jsonl`: JSON lines for each confirmed attack (includes switch ports, device names, MoE probabilities, and expert votes).
 - `moe_decisions.log`: human-readable trace of every inference window.
 - `packets_meta.csv`: tabular summary per inspected window (MAC/IP pairs, protocol, score).
-- `flows.csv`: records of flow programming and mitigations.
+- `flows.csv`: records of flow programming.
+- `mitigations.csv`: auditable policy decisions with timestamp, class, confidence, source/destination, action, reason, and expiry.
 - `alerts_only.pcap`: optional PCAP containing only the frames that triggered alerts (requires scapy).
 
-You can tailor log filenames, output directories, mitigation mode (alert-only vs. drop), and default replay host by editing `dynamic_moe/config.yaml`. The MoE adapter itself reads thresholds and checkpoint information from `gateway/config_dynamic.yaml`.
+You can tailor log filenames, output directories, mitigation mode, confidence tiers, action expiry, and default replay host by editing `dynamic_moe/config.yaml`. Automatic blocking is disabled by default; high-confidence attacks are logged as alerts unless `allow_automatic_blocking: true` is set with a blocking mitigation mode. The MoE adapter itself reads classification thresholds and checkpoint information from `gateway/config_dynamic.yaml`.
 
 ## Feature extraction & MoE API
 
@@ -105,6 +106,189 @@ You can tailor log filenames, output directories, mitigation mode (alert-only vs
   ```
 
   This API is reused by the Ryu controller but can also be imported in standalone scripts for quick experiments.
+
+## Full End-to-End Demo
+
+### A. Setup
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -U pip
+pip install -e '.[all]'
+```
+
+### B. Generate demo PCAP if needed
+
+```bash
+python3 tools/generate_demo_pcap.py --output artifacts/demo/demo_traffic.pcap
+```
+
+The generator creates safe synthetic normal, DoS-like burst, and ARP-like suspicious traffic. It does not fake model outputs.
+
+### C. Run full E2E dry-controller demo
+
+```bash
+python3 -m dynamic_moe.e2e_demo \
+  --pcap artifacts/demo/demo_traffic.pcap \
+  --runtime-dir /tmp/netsentinel_e2e \
+  --mode full \
+  --no-install-flows \
+  --output-json /tmp/netsentinel_e2e/e2e_summary.json
+```
+
+This runs the real replay path: PCAP read, 1 second windows, 0.5 second hop, 8 micro-bins, expert inference, dense gate, Normal/DoS/ARP probabilities, SDN policy decision, audit logs, and JSON evidence. Only physical OpenFlow installation is skipped.
+
+### D. Run full Mininet/Ryu demo if supported
+
+Install host SDN tooling first:
+
+```bash
+sudo apt install mininet openvswitch-switch tcpreplay
+pip install ryu
+```
+
+Then run:
+
+```bash
+sudo python3 -m dynamic_moe.e2e_demo \
+  --pcap artifacts/demo/demo_traffic.pcap \
+  --runtime-dir /tmp/netsentinel_mininet \
+  --mode mininet \
+  --controller ryu \
+  --install-flows \
+  --output-json /tmp/netsentinel_mininet/e2e_summary.json
+```
+
+The command refuses to claim live OpenFlow if root, Mininet, Open vSwitch, or Ryu are missing. For interactive live topology work, use `python3 -m dynamic_moe.run_dynamic_moe` after the same dependency checks pass.
+
+### E. Logs
+
+The runtime directory contains:
+
+- `e2e_summary.json`: machine-readable final evidence.
+- `mitigations.csv`: timestamp, class, confidence, source/destination, action, expiry, reason.
+- `moe_decisions.log`: per-window prediction trace.
+- `packets_meta.csv`: per-window packet metadata.
+- `alerts.jsonl`: attack-only alert records when the policy and thresholds mark a window as attack.
+
+### F. Successful output shape
+
+The E2E command prints one JSON line containing:
+
+```json
+{
+  "status": "PASS",
+  "packets_read": 144,
+  "windows_generated": 12,
+  "final_prediction": {
+    "class": "dos",
+    "confidence": 0.38,
+    "selected_action": "monitor"
+  },
+  "mitigation_log": "/tmp/netsentinel_e2e/mitigations.csv",
+  "output_json": "/tmp/netsentinel_e2e/e2e_summary.json"
+}
+```
+
+Exact probabilities and action depend on the trained checkpoint and configured thresholds.
+
+### G. Troubleshooting
+
+- `No module named ryu`: install Ryu with `pip install ryu`; dry-controller E2E still works without it.
+- `is_root=false`: live Mininet/OpenFlow mode requires `sudo`; dry-controller E2E does not.
+- Missing `mn` or `ovs-vsctl`: install Mininet and Open vSwitch via the OS package manager.
+- No windows generated: use a PCAP spanning more than 1 second or generate `artifacts/demo/demo_traffic.pcap`.
+- Missing checkpoint/scaler: verify `gateway/unified_moe.pt`, detector artifact directories, and model scalers exist.
+
+## Live Mininet/Ryu/OpenFlow Demo
+
+### Prerequisites
+
+Check the machine before attempting the live demo:
+
+```bash
+python3 tools/check_live_sdn_env.py
+```
+
+Required:
+
+- root privileges for Mininet/Open vSwitch namespaces;
+- `mn`, `ovs-vsctl`, and `ovs-ofctl`;
+- Ryu available both as `ryu-manager` and as `import ryu` in the Python used by the live command.
+
+Typical install commands:
+
+```bash
+sudo apt update
+sudo apt install mininet openvswitch-switch tcpreplay
+python3 -m pip install ryu
+sudo python3 -c "import ryu; print('ryu import ok')"
+which ryu-manager
+```
+
+If `pip install ryu` fails on Python 3.12 with a setuptools/easy_install build error, use a Python 3.10 or 3.11 virtual environment for the live controller:
+
+```bash
+python3.11 -m venv .venv-ryu
+source .venv-ryu/bin/activate
+pip install -U pip "setuptools<70" wheel
+pip install ryu
+python -c "import ryu; print('ryu import ok')"
+```
+
+### Exact Live Command
+
+Generate the demo traffic if needed:
+
+```bash
+python3 tools/generate_demo_pcap.py --output artifacts/demo/demo_traffic.pcap
+```
+
+Run the isolated Mininet/Ryu/OpenFlow demo:
+
+```bash
+sudo python3 -m dynamic_moe.e2e_demo \
+  --pcap artifacts/demo/demo_traffic.pcap \
+  --runtime-dir /tmp/netsentinel_live_sdn \
+  --mode mininet \
+  --controller ryu \
+  --install-flows \
+  --output-json /tmp/netsentinel_live_sdn/e2e_summary.json
+```
+
+The command starts Ryu, starts the Mininet topology, replays the PCAP from the configured IoT host, lets the controller run Dynamic MoE inference, applies the SDN policy, dumps `s1` flow entries, and writes the JSON summary.
+
+### OpenFlow Evidence
+
+After the live run, inspect:
+
+```bash
+cat /tmp/netsentinel_live_sdn/e2e_summary.json
+cat /tmp/netsentinel_live_sdn/mitigations.csv
+cat /tmp/netsentinel_live_sdn/ovs_flows_s1.txt
+sudo ovs-ofctl -O OpenFlow13 dump-flows s1 || true
+```
+
+A live SDN PASS requires:
+
+```json
+"openflow": {
+  "attempted": true,
+  "succeeded": true,
+  "skipped": false
+}
+```
+
+and a visible mitigation flow in the OVS dump, normally a `priority=20` rule installed by the controller.
+
+### Live Troubleshooting
+
+- Not root: run the live command with `sudo`; Mininet cannot create namespaces as an unprivileged user.
+- Ryu missing: install Ryu in the same Python environment used by `sudo python3`; verify with `sudo python3 -c "import ryu"`.
+- OVS not running: start it with `sudo systemctl start openvswitch-switch` or your distro equivalent.
+- Controller not connected: check `/tmp/netsentinel_live_sdn/ryu_controller.log` and confirm the switch is using OpenFlow13.
+- No OpenFlow rule installed: inspect `mitigations.csv`; safe policy may have selected `monitor` or `alert`, which intentionally does not install a blocking rule. The `--install-flows` Mininet mode writes an isolated controller config that permits high-confidence temporary mitigation only inside the Mininet topology.
 
 ## Logs and troubleshooting
 

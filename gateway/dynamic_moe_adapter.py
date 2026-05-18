@@ -115,18 +115,31 @@ class DynamicMoEGateway:
         prediction_id = int(probabilities.argmax().item())
         label = class_id_to_name(prediction_id)
         attack_prob = 1.0 - prob_map["normal"]
-        score = max(attack_prob, float(probabilities[prediction_id].item()))
+        confidence = float(probabilities[prediction_id].item())
+        score = max(attack_prob, confidence)
         threshold = self.config.attack_thresholds.get(label, self.config.attack_thresholds["default"])
         is_attack = label != "normal" and score >= threshold
         expert_weights = attention["weights"].squeeze(0).tolist()
         expert_votes = {name: float(weight) for name, weight in zip(self.expert_names, expert_weights)}
+        expert_outputs = attention["expert_outputs"]
         response = {
             "label": label,
             "attack_type": label if label != "normal" else None,
             "is_attack": is_attack,
+            "confidence": confidence,
             "score": float(score),
             "probabilities": prob_map,
             "expert_votes": expert_votes,
+            "expert_weights": expert_votes,
+            "expert_output_shapes": {
+                name: [int(expert_outputs.shape[0]), 1]
+                for name in self.expert_names
+            },
+            "expert_outputs": {
+                name: float(value)
+                for name, value in zip(self.expert_names, expert_outputs.squeeze(0).tolist())
+            },
+            "gate_weight_sum": float(attention["weights"].sum(dim=1).squeeze(0).item()),
             "raw_logits": logits.squeeze(0).tolist(),
         }
         return response

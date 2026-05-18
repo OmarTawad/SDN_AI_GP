@@ -25,6 +25,7 @@ from gateway.dynamic_moe_adapter import DynamicMoEGateway
 from dynamic_moe.config import load_runtime_config
 from dynamic_moe.device_map import DEVICE_MAP, normalize_mac
 from dynamic_moe.feature_extractor import FeatureWindow, StreamingFeatureExtractor
+from dynamic_moe.policy import PolicyConfig, SdnPolicyEngine
 from dynamic_moe.runtime import RuntimeLogger
 
 
@@ -40,6 +41,17 @@ class DynamicMoeController(app_manager.RyuApp):
         self.moe = DynamicMoEGateway(config_path="gateway/config_dynamic.yaml")
         self.runtime_config = load_runtime_config()
         self.runtime_logger = RuntimeLogger(self.runtime_config)
+        self.policy = SdnPolicyEngine(
+            PolicyConfig(
+                min_alert_confidence=self.runtime_config.min_alert_confidence,
+                min_rate_limit_confidence=self.runtime_config.min_rate_limit_confidence,
+                min_block_confidence=self.runtime_config.min_block_confidence,
+                arp_isolate_confidence=self.runtime_config.arp_isolate_confidence,
+                mitigation_mode=self.runtime_config.mitigation,
+                allow_automatic_blocking=self.runtime_config.allow_automatic_blocking,
+                action_expiry_seconds=self.runtime_config.action_expiry_seconds,
+            )
+        )
         self.extractor = StreamingFeatureExtractor()
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
         self.blocked_macs: set[str] = set()
@@ -66,15 +78,15 @@ class DynamicMoeController(app_manager.RyuApp):
             )
         datapath.send_msg(mod)
 
-    def _apply_mitigation(self, datapath, src_mac: Optional[str]) -> None:
-        if not src_mac or src_mac in self.blocked_macs or self.runtime_config.mitigation != "drop":
+    def _apply_mitigation(self, datapath, src_mac: Optional[str], action: str) -> None:
+        if not src_mac or src_mac in self.blocked_macs or action not in {"drop", "isolate", "quarantine"}:
             return
         parser = datapath.ofproto_parser
         match = parser.OFPMatch(eth_src=src_mac)
         self._add_flow(datapath, priority=20, match=match, actions=[])
         self.blocked_macs.add(src_mac)
-        self.logger.warning("Installed drop flow for %s", src_mac)
-        self.runtime_logger.log_flow_event(datapath.id, 0, 0, src_mac, "*", "drop", notes="MoE mitigation")
+        self.logger.warning("Installed %s flow for %s", action, src_mac)
+        self.runtime_logger.log_flow_event(datapath.id, 0, 0, src_mac, "*", action, notes="MoE mitigation")
 
     # ------------------------------------------------------------------ Ryu event hooks
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
@@ -199,16 +211,26 @@ class DynamicMoeController(app_manager.RyuApp):
         context.setdefault("packet_count", 0)
         self.runtime_logger.log_decision(context, packet_meta, result)
         self.runtime_logger.log_packet_metadata(context, packet_meta, result)
+        decision = self.policy.decide(result)
+        self.runtime_logger.log_mitigation(
+            packet_meta=packet_meta,
+            inference=result,
+            action=decision.action,
+            expiry=decision.expiry,
+            reason=decision.reason,
+        )
         if result.get("is_attack"):
             self.logger.warning(
-                "Attack detected | type=%s score=%.3f src=%s dst=%s",
+                "Attack detected | type=%s score=%.3f action=%s src=%s dst=%s",
                 result.get("attack_type"),
                 float(result.get("score", 0.0)),
+                decision.action,
                 packet_meta.get("src_mac"),
                 packet_meta.get("dst_mac"),
             )
             self.runtime_logger.log_attack(context, packet_meta, result, raw_frame=packet_meta.get("raw_frame"))
-            self._apply_mitigation(datapath, packet_meta.get("src_mac"))
+            if decision.install_flow:
+                self._apply_mitigation(datapath, packet_meta.get("src_mac"), decision.action)
 
     def close(self) -> None:  # pragma: no cover - not triggered in tests
         try:

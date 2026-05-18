@@ -84,6 +84,7 @@ class StreamingFeatureExtractor:
         )
         self.dos_state = SequenceState(sequence_length=DOS_LSTM_SEQUENCE_LENGTH) if "dos" in self.tasks else None
         self.arp_state = SequenceState(sequence_length=ARP_LSTM_SEQUENCE_LENGTH) if "arp" in self.tasks else None
+        self._last_packet_meta: Dict[str, object] = {}
 
     def _assemble(
         self,
@@ -144,6 +145,7 @@ class StreamingFeatureExtractor:
                 "protocol": auto_row.get("protocol"),
             }
         )
+        self._last_packet_meta = packet_meta.copy()
         rows: Dict[str, Dict[str, object]] = {}
         if dos_row is not None:
             rows["dos"] = dos_row
@@ -167,8 +169,9 @@ class StreamingFeatureExtractor:
         """Force any buffered windows to be emitted."""
 
         windows: List[FeatureWindow] = []
+        packet_meta = self._last_packet_meta or {"timestamp": time.time()}
         for buffer in self.manager.flush():
-            result = self._assemble(buffer, {"timestamp": time.time()})
+            result = self._assemble(buffer, packet_meta)
             if result is not None:
                 windows.append(result)
         return windows

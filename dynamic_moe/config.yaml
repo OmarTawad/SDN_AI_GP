@@ -6,12 +6,19 @@ runtime:
   flows_file: flows.csv
   packets_meta_file: packets_meta.csv
   decisions_log: moe_decisions.log
+  mitigations_file: mitigations.csv
   attack_pcap: alerts_only.pcap
 
 controller:
   ip: 127.0.0.1
   port: 6633
-  mitigation: alert  # options: alert, drop
+  mitigation: alert  # options: alert, drop, isolate, quarantine
+  min_alert_confidence: 0.70
+  min_rate_limit_confidence: 0.90
+  min_block_confidence: 0.98
+  arp_isolate_confidence: 0.95
+  allow_automatic_blocking: false
+  action_expiry_seconds: 300
 
 pcap:
   default_replay_host: h_smartthings
